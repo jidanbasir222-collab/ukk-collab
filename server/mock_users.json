@@ -1,0 +1,93 @@
+[
+  {
+    "id": 1,
+    "email": "tester@example.com",
+    "passwordHash": "$2a$10$GzARq911aLbp1nNHYtnR.euLVC1mB4h4sv2NrHrLTVK.xvTd8TRae",
+    "role": "user"
+  },
+  {
+    "id": 2,
+    "email": "tester2@example.com",
+    "passwordHash": "$2a$10$hrVduMxvzsVEJjIFBh/wIei9HTEpZiPkPYFHgo/D07KRKgth/6soq",
+    "role": "user"
+  },
+  {
+    "id": 3,
+    "email": "tester3@example.com",
+    "passwordHash": "$2a$10$uh2rybDa5/StCUUmo3lhKOTKDaLMeUWQgQrh/WCtNJMQXvRsSTqrq",
+    "role": "user"
+  },
+  {
+    "id": 4,
+    "email": "jidan",
+    "passwordHash": "jidan@gmail.com",
+    "role": "$2a$10$YLg3EAYwQL/amLEg1E1kMOE91mmDsYzPC38qpJQw0O2k3FQ4LmScq"
+  },
+  {
+    "id": 5,
+    "email": "jidan",
+    "passwordHash": "jidan@gmail.com",
+    "role": "$2a$10$VyTvVM0qduFn8ESinUiFGetqauFLkFSK/RVsL4WCm/zrkCQJssB/2"
+  },
+  {
+    "id": 6,
+    "email": "jidan",
+    "passwordHash": "jidan@gmail.com",
+    "role": "$2a$10$Z7czV2fXbwL66JQXu099Re0kIKUHPTdbXT3YWIdx.i5pxGgzWwOUy"
+  },
+  {
+    "id": 7,
+    "email": "Tester Auto",
+    "passwordHash": "tester_auto@example.com",
+    "role": "$2a$10$EWEPf4KzBmXM6gfU5rbO4eLLkkN0nsTdg45DC0rgyD3pjysdjlxdm"
+  },
+  {
+    "id": 8,
+    "name": "Tester Auto",
+    "email": "tester_auto2@example.com",
+    "passwordHash": "$2a$10$apR5DEFqI6FhFOq61yoS5eCeo2UO1eBiX9UMjom9abTJCHEaCFt5W",
+    "role": "user"
+  },
+  {
+    "id": 9,
+    "name": "Tester Auto",
+    "email": "tester_auto3@example.com",
+    "passwordHash": "$2a$10$QS5hUri1cy0tnM4AHC4mhu47T7r0VbctUfqlJoLT9xmBeRaAMvqgu",
+    "role": "user"
+  },
+  {
+    "id": 10,
+    "name": "Tester Auto",
+    "email": "tester_auto4@example.com",
+    "passwordHash": "$2a$10$dhfQ7.6.UXjDUklNN4xtfOT8KLnExEy2yetYaPEwRScO0EdbO3sOy",
+    "role": "user"
+  },
+  {
+    "id": 11,
+    "name": "Tester Auto",
+    "email": "tester_auto5@example.com",
+    "passwordHash": "$2a$10$g.oZ52xsrpmojte/48fIK..nuQ..ByZiNq27Rbij1EhrIYXlaqRMy",
+    "role": "user"
+  },
+  {
+    "id": 12,
+    "name": "DebugUser",
+    "email": "debuguser@example.com",
+    "passwordHash": "$2a$10$zBEJRYqRnycm.4hS.f5dFOLytDD1Uf9ggsh0EeDwoi5yyKKRcogNy",
+    "role": "user"
+  },
+  {
+    "id": 13,
+    "name": "LaragonUser",
+    "email": "laragonuser@example.com",
+    "passwordHash": "$2a$10$Dl/7ydCON8VnRScZgcMxme3zdjrBx8bm1malFtF5vDCRXGO3.vDvC",
+    "role": "user"
+  },
+  {
+    "id": 14,
+    "name": "jidan",
+    "email": "jidan@gmail.com",
+    "passwordHash": "$2a$10$yZtvOgMttu8j4/8LVoDnn.qSAkYdc3o7EvJMBTG4PPYx9haccKt5m",
+    "role": "user"
+  }
+]

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   LayoutDashboard,
   Calendar,
@@ -13,17 +14,11 @@ import {
   Bell,
   Settings,
   LogOut,
-  Lock,
-  Mail,
-  Eye,
-  EyeOff,
   Plus,
   Pencil,
   Trash2,
   Upload,
-  Info,
   MapPin,
-  Sparkles,
   Check,
   CheckCircle2,
   X,
@@ -39,28 +34,17 @@ import {
   Clock,
   UserCheck,
   AlertTriangle,
-  Download
+  Download,
+  Sparkles,
+  Info
 } from "lucide-react";
 import Chart from "../components/Chart";
-
-// Custom inline Instagram SVG component to avoid package variations
-const Instagram = ({ className }) => (
-  <svg
-    className={className}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
-    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
-    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
-  </svg>
-);
+import Instagram from "../components/Instagram";
+import LoginBox from "../components/LoginBox";
 
 export default function Home() {
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
+
   // Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [email, setEmail] = useState("admin@electricpulse.com");
@@ -233,6 +217,18 @@ export default function Home() {
   // Active Payment Details Modal State
   const [activePaymentModal, setActivePaymentModal] = useState(null);
 
+  // Gateway payment form state
+  const [paymentForm, setPaymentForm] = useState({
+    user: "",
+    email: "",
+    event: "",
+    totalBayar: "",
+    gateway: "MockPay"
+  });
+  const [gatewayResponse, setGatewayResponse] = useState(null);
+  const [checkoutOrder, setCheckoutOrder] = useState("");
+  const [checkoutResponse, setCheckoutResponse] = useState(null);
+
   // Payments verification metrics
   const [verifiedRevenueToday, setVerifiedRevenueToday] = useState(45200000); // Rp 45.2M starting value
 
@@ -276,19 +272,35 @@ export default function Home() {
     }, 4000);
   };
 
-  // Mock Login Handler
-  const handleLogin = (e) => {
+  // Login Handler (calls backend)
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setAuthError("");
     if (!email || !password) {
       setAuthError("Email and Password are required!");
       return;
     }
-    if (email === "admin@electricpulse.com" && password === "admin123") {
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthError(data.error || data.message || "Login gagal.");
+        return;
+      }
+      if (data.token) {
+        localStorage.setItem("token", data.token);
+      }
       setIsLoggedIn(true);
       setAuthError("");
-      triggerNotification("Selamat datang kembali, Master Admin!");
-    } else {
-      setAuthError("Email atau Password salah. Gunakan email default.");
+      triggerNotification(`Selamat datang, ${data.user?.name || data.user?.email || 'user'}!`);
+    } catch (err) {
+      console.error(err);
+      setAuthError("Terjadi kesalahan jaringan saat login.");
     }
   };
 
@@ -443,6 +455,60 @@ export default function Home() {
     triggerNotification(`Pembayaran ${orderId} ditolak. Notifikasi dikirim ke pembeli.`);
   };
 
+  // Create Payment Gateway Link Handler
+  const handleCreateGatewayPayment = async (e) => {
+    e.preventDefault();
+    if (!paymentForm.user || !paymentForm.email || !paymentForm.event || !paymentForm.totalBayar) {
+      triggerNotification("Lengkapi semua data pembayaran gateway terlebih dahulu.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/payments/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(paymentForm)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Gagal membuat link pembayaran.");
+      }
+
+      setGatewayResponse(data);
+      setPayments([data.payment, ...payments]);
+      setCheckoutOrder(data.payment.orderId);
+      triggerNotification("Link pembayaran gateway berhasil dibuat.");
+    } catch (error) {
+      console.error(error);
+      triggerNotification(error.message || "Gagal membuat link pembayaran gateway.");
+    }
+  };
+
+  // Checkout via gateway simulation
+  const handleCheckoutGateway = async () => {
+    if (!checkoutOrder) {
+      triggerNotification("Masukkan Order ID untuk menyelesaikan pembayaran.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/payments/${checkoutOrder}/checkout`, {
+        method: "POST"
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Gagal menyelesaikan pembayaran gateway.");
+      }
+
+      setCheckoutResponse(data);
+      setPayments(payments.map((p) => p.orderId === checkoutOrder ? data.payment : p));
+      triggerNotification(`Pembayaran ${checkoutOrder} berhasil diselesaikan.`);
+    } catch (error) {
+      console.error(error);
+      triggerNotification(error.message || "Gagal menyelesaikan pembayaran gateway.");
+    }
+  };
+
   // Dynamic Potential Revenue for Add Form
   const potentialRevenue = eventForm.ticketPrice * eventForm.quota;
 
@@ -570,84 +636,16 @@ export default function Home() {
         </div>
 
         {/* Login Box */}
-        <div className="w-full max-w-[420px] bg-[#141419] border border-[#26262f] rounded-2xl p-8 glow-card transition-all duration-300 hover:border-[#ff3b70]/20">
-          <form onSubmit={handleLogin} className="flex flex-col gap-5">
-            {authError && (
-              <div className="bg-[#ff3b70]/10 border border-[#ff3b70]/30 text-[#ff3b70] text-xs px-4 py-3 rounded-xl flex items-center gap-2">
-                <Info className="w-4 h-4 shrink-0" />
-                <span>{authError}</span>
-              </div>
-            )}
-
-            {/* Email field */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Work Email</label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
-                <input
-                  type="email"
-                  className="w-full bg-[#18181f] border border-[#26262f] rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/50 transition-all font-mono"
-                  placeholder="admin@electricpulse.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Password field */}
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Secure Password</label>
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  className="w-full bg-[#18181f] border border-[#26262f] rounded-xl pl-11 pr-11 py-3 text-sm text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/50 transition-all font-mono"
-                  placeholder="••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8b8b9a] hover:text-white transition-colors"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Actions row */}
-            <div className="flex items-center justify-between text-xs mt-1">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="accent-[#ff3b70] rounded border-[#26262f] bg-[#18181f]"
-                />
-                <span className="text-[#8b8b9a] hover:text-white transition-colors">Keep me signed in</span>
-              </label>
-              <a href="#" className="text-[#ff3b70] hover:underline hover:text-[#ff5c8a] transition-all font-medium">
-                Reset Access?
-              </a>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
-            >
-              Login to Pulse
-            </button>
-          </form>
-
-          {/* Secure Environment Notice */}
-          <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] text-[#8b8b9a] font-medium border-t border-[#26262f]/40 pt-4">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Secure 256-bit AES Admin Environment</span>
-          </div>
-        </div>
+        <LoginBox
+          email={email}
+          setEmail={setEmail}
+          password={password}
+          setPassword={setPassword}
+          handleLogin={handleLogin}
+          authError={authError}
+          showPassword={showPassword}
+          setShowPassword={setShowPassword}
+        />
 
         {/* Footer info */}
         <div className="mt-12 text-center text-[10px] text-[#50505f] font-medium flex flex-col gap-2">
@@ -2023,6 +2021,117 @@ export default function Home() {
                   <div className="flex flex-col">
                     <span className="text-2xl font-extrabold text-white font-mono leading-none">1.240</span>
                     <span className="text-[9px] text-[#8b8b9a] mt-2 font-medium">Akun terdaftar melakukan checkout</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Gateway Payment Creation card */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h3 className="text-xl font-extrabold text-white">Buat Link Pembayaran</h3>
+                      <p className="text-xs text-[#8b8b9a] mt-1">Buat sesi pembayaran gateway untuk event dan kirim ke pembeli.</p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-[#8b8b9a] font-bold">Gateway</span>
+                  </div>
+
+                  <form onSubmit={handleCreateGatewayPayment} className="grid gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input
+                        type="text"
+                        placeholder="Nama Pembeli"
+                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
+                        value={paymentForm.user}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, user: e.target.value })}
+                      />
+                      <input
+                        type="email"
+                        placeholder="Email Pembeli"
+                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
+                        value={paymentForm.email}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, email: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <input
+                        type="text"
+                        placeholder="Nama Event"
+                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
+                        value={paymentForm.event}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, event: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Total Bayar"
+                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
+                        value={paymentForm.totalBayar}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, totalBayar: Number(e.target.value) })}
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <select
+                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40"
+                        value={paymentForm.gateway}
+                        onChange={(e) => setPaymentForm({ ...paymentForm, gateway: e.target.value })}
+                      >
+                        <option>MockPay</option>
+                        <option>DemoPay</option>
+                      </select>
+                      <button
+                        type="submit"
+                        className="flex-1 py-3 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.98] transition-transform"
+                      >
+                        Buat Link
+                      </button>
+                    </div>
+
+                    {gatewayResponse && (
+                      <div className="bg-[#0d0d10] border border-[#26262f] rounded-2xl p-4 text-xs text-[#d4d4d8]">
+                        <div className="mb-2 text-white font-semibold">Gateway berhasil dibuat</div>
+                        <div className="mb-2">Provider: {gatewayResponse.provider}</div>
+                        <div className="mb-2">Order ID: {gatewayResponse.payment.orderId}</div>
+                        <div className="mb-3 break-all">Link: <a href={gatewayResponse.gatewayLink} target="_blank" rel="noreferrer" className="text-[#ff3b70] hover:underline">{gatewayResponse.gatewayLink}</a></div>
+                        <div className="text-[10px] text-[#8b8b9a]">Salin link ini lalu berikan ke pembeli untuk menyelesaikan pembayaran.</div>
+                      </div>
+                    )}
+                  </form>
+                </div>
+
+                <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h3 className="text-xl font-extrabold text-white">Selesaikan Pembayaran</h3>
+                      <p className="text-xs text-[#8b8b9a] mt-1">Simulasikan checkout gateway menggunakan Order ID.</p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-[#8b8b9a] font-bold">Checkout</span>
+                  </div>
+
+                  <div className="grid gap-4">
+                    <input
+                      type="text"
+                      placeholder="Order ID (contoh: PGW-123456-789)"
+                      className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
+                      value={checkoutOrder}
+                      onChange={(e) => setCheckoutOrder(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCheckoutGateway}
+                      className="w-full py-3 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.98] transition-transform"
+                    >
+                      Proses Checkout
+                    </button>
+                    {checkoutResponse && (
+                      <div className="bg-[#0d0d10] border border-[#26262f] rounded-2xl p-4 text-xs text-[#d4d4d8]">
+                        <div className="mb-2 text-white font-semibold">Pembayaran selesai</div>
+                        <div className="mb-1">Order: {checkoutResponse.payment.orderId}</div>
+                        <div className="mb-1">Status: {checkoutResponse.payment.status}</div>
+                        <div className="text-[10px] text-[#8b8b9a]">Status transaksi diupdate jadi PAID dan akan muncul di daftar pembayaran.</div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
