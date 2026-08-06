@@ -1,0 +1,10 @@
+{
+	"servers": {
+		"my-mcp-server-1af8ac1c": {
+			"type": "stdio",
+			"command": "escape",
+			"args": []
+		}
+	},
+	"inputs": []
+}

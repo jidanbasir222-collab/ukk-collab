@@ -8,7 +8,6 @@ export default function RegisterBox() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("user");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,7 +23,7 @@ export default function RegisterBox() {
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -97,10 +96,7 @@ export default function RegisterBox() {
         </div>
 
         <div className="flex items-center justify-between gap-2">
-          <select value={role} onChange={(e) => setRole(e.target.value)} className="bg-[#18181f] border border-[#26262f] rounded-xl px-3 py-2 text-sm text-white font-mono">
-            <option value="user">User</option>
-            <option value="admin">Admin</option>
-          </select>
+          <span className="text-xs text-[#8b8b9a]">Akun biasa hanya dapat mendaftar sebagai user.</span>
           <Link href="/" className="text-xs text-[#8b8b9a] hover:text-white underline">Already have an account?</Link>
         </div>
 

@@ -11,7 +11,7 @@ import {
   Sparkles
 } from "lucide-react";
 
-export default function LoginBox({ email, setEmail, password, setPassword, handleLogin, authError, showPassword, setShowPassword }) {
+export default function LoginBox({ email, setEmail, password, setPassword, handleLogin, authError, showPassword, setShowPassword, loading }) {
   return (
     <div className="w-full max-w-[420px] bg-[#141419] border border-[#26262f] rounded-2xl p-8 glow-card transition-all duration-300 hover:border-[#ff3b70]/20">
       <form onSubmit={handleLogin} className="flex flex-col gap-5">
@@ -79,9 +79,10 @@ export default function LoginBox({ email, setEmail, password, setPassword, handl
         {/* Submit Button */}
         <button
           type="submit"
-          className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+          disabled={loading}
+          className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          Login to Pulse
+          {loading ? "Memproses..." : "Login ke Pulse"}
         </button>
 
         {/* Register Link Button */}
@@ -95,7 +96,7 @@ export default function LoginBox({ email, setEmail, password, setPassword, handl
       {/* Secure Environment Notice */}
       <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] text-[#8b8b9a] font-medium border-t border-[#26262f]/40 pt-4">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-        <span>Secure 256-bit AES Admin Environment</span>
+        <span>Secure 256-bit AES Login Environment</span>
       </div>
     </div>
   );
