@@ -1,209 +1,286 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Ticket, Users, TrendingUp, Bell, Calendar, MapPin, ArrowRight, Share2 } from "lucide-react";
 
 const features = [
   {
     title: "Smart Ticketing",
-    description: "Full-stack ticketing with dynamic pricing, checkout, and digital access.",
-    icon: "🎟️"
+    description: "Secure, blockchain-verified tickets with dynamic pricing and instant digital delivery.",
+    icon: Ticket,
+    color: "text-[#ff3b70] bg-[#ff3b70]/10 border-[#ff3b70]/25"
   },
   {
     title: "Artist Management",
-    description: "Organize lineups, roster details, and performance schedules with ease.",
-    icon: "🎤"
+    description: "Comprehensive tools for routing, technical riders, and seamless communication.",
+    icon: Users,
+    color: "text-[#8b5cf6] bg-[#8b5cf6]/10 border-[#8b5cf6]/25"
   },
   {
     title: "Real-time Analytics",
-    description: "Track attendance, sales, and event momentum in one dashboard.",
-    icon: "📈"
+    description: "Deep dive into sales data, audience demographics, and venue occupancy instantly.",
+    icon: TrendingUp,
+    color: "text-cyan-400 bg-cyan-500/10 border-cyan-500/25"
   }
 ];
 
 const events = [
   {
     name: "Neon Night Tour 2024",
+    artist: "LUNA & The Stars",
     date: "15 Nov 2024",
-    venue: "GBK Stadium",
-    category: "Live Concert"
+    venue: "Stadion Utama GBK",
+    category: "Pop Live",
+    status: "ACTIVE",
+    image: "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=800&q=80"
   },
   {
     name: "Thunderous Echoes",
+    artist: "The Iron Strings",
     date: "22 Nov 2024",
     venue: "The Warehouse Arena",
-    category: "Rock Night"
+    category: "Rock Night",
+    status: "SOLD OUT",
+    image: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=800&q=80"
   },
   {
     name: "Electric Pulse Fest",
+    artist: "DJ Static & Friends",
     date: "05 Des 2024",
     venue: "Beach Club Bali",
-    category: "Festival"
+    category: "Festival",
+    status: "ACTIVE",
+    image: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80"
   },
   {
     name: "Midnight Jazz",
-    date: "30 Oct 2024",
-    venue: "Sky Lounge Jakarta",
-    category: "Jazz Session"
+    artist: "Smooth Quartette",
+    date: "30 Okt 2024",
+    venue: "Sky Lounge Plaza",
+    category: "Jazz Session",
+    status: "CLOSED",
+    image: "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=800&q=80"
   }
 ];
 
 export default function Home() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      const token = localStorage.getItem("token");
+      if (token) setIsLoggedIn(true);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, []);
+
   return (
-    <main className="min-h-screen bg-[#05050d] text-white overflow-x-hidden">
-      <div className="relative">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,59,112,0.18),_transparent_18%),radial-gradient(circle_at_bottom_right,_rgba(139,92,246,0.16),_transparent_20%)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,_rgba(0,0,0,0.55),_rgba(0,0,0,0.9))]" />
-
-        <header className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-6 py-6 sm:px-10">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-[#ff3b70] to-[#8b5cf6] flex items-center justify-center text-sm font-bold shadow-lg shadow-[#ff3b70]/20">
-              EP
-            </div>
-            <div>
-              <p className="text-sm font-semibold">Electric Pulse</p>
-            </div>
-          </div>
-
-          <nav className="hidden items-center gap-8 text-sm text-[#c7c7d4] md:flex">
-            <a href="#home" className="hover:text-white transition">Home</a>
-            <a href="#features" className="hover:text-white transition">Features</a>
-            <a href="#events" className="hover:text-white transition">Events</a>
-            <a href="#support" className="hover:text-white transition">Support</a>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <Link href="/login" className="rounded-full border border-[#ffffff26] bg-white/10 px-5 py-2 text-sm text-white transition hover:bg-white/15">
-              Login
-            </Link>
-            <Link href="/register" className="rounded-full bg-[#ff3b70] px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-[#ff3b70]/20 transition hover:bg-[#ff5c8a]">
-              Register
-            </Link>
-          </div>
-        </header>
-
-        <section id="home" className="relative z-10 mx-auto max-w-6xl px-6 py-28 sm:px-10 lg:py-32">
-          <div className="grid gap-16 lg:grid-cols-[0.95fr_0.95fr] lg:items-center">
-            <div className="space-y-8">
-              <div className="max-w-xl">
-                <p className="text-xs uppercase tracking-[0.4em] text-[#8b8b9a]">Electric Pulse</p>
-                <h1 className="mt-6 text-5xl font-extrabold leading-tight text-white sm:text-6xl">
-                  Experience the Pulse of Future Events
-                </h1>
-                <p className="mt-6 text-base leading-8 text-[#c7c7d4] sm:text-lg">
-                  The ultimate platform for ticketing, artist management, and real-time event analytics. Step into the future of entertainment.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                <Link href="/login" className="inline-flex items-center justify-center rounded-full bg-[#ff3b70] px-8 py-4 text-sm font-semibold text-white shadow-[0_20px_80px_rgba(255,59,112,0.25)] transition hover:bg-[#ff5c8a]">
-                  Jelajahi Event ➜
-                </Link>
-                <div className="text-sm text-[#8b8b9a]">
-                  Everything you need to manage live experiences, from discovery to checkout.
-                </div>
-              </div>
-            </div>
-
-            <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#111019]/90 p-6 shadow-[0_40px_120px_rgba(0,0,0,0.45)]">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,59,112,0.18),_transparent_35%),radial-gradient(circle_at_bottom_right,_rgba(139,92,246,0.14),_transparent_28%)]" />
-              <div className="relative grid gap-4 sm:grid-cols-2">
-                {events.slice(0, 4).map((item) => (
-                  <div key={item.name} className="rounded-[1.5rem] border border-white/10 bg-[#0b0b12]/80 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.2)] transition hover:scale-[1.01]">
-                    <div className="mb-4 h-36 rounded-3xl bg-gradient-to-br from-[#ff3b70]/20 via-[#8b5cf6]/10 to-[#0d0d12]" />
-                    <div className="space-y-3">
-                      <p className="text-sm uppercase tracking-[0.3em] text-[#8b8b9a]">{item.category}</p>
-                      <h3 className="text-lg font-semibold text-white">{item.name}</h3>
-                      <p className="text-sm text-[#9ca3af]">{item.date} · {item.venue}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+    <main className="min-h-screen bg-[#05050d] text-[#f4f4f5] overflow-x-hidden font-sans relative">
+      {/* Hero Concert Background with neon laser overlay */}
+      <div className="absolute top-0 left-0 w-full h-[640px] md:h-[720px] pointer-events-none overflow-hidden z-0">
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.22]"
+          style={{
+            backgroundImage: `url('https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1920&q=80')`
+          }}
+        />
+        {/* Pink and purple laser beam overlays */}
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,59,112,0.18),_transparent_40%),radial-gradient(circle_at_bottom_right,_rgba(139,92,246,0.14),_transparent_35%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,_rgba(5,5,13,0)_60%,_#05050d_100%)]" />
+        {/* Abstract grid lines overlay */}
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,_transparent_1px),_linear-gradient(90deg,_rgba(255,255,255,0.02)_1px,_transparent_1px)] bg-[size:40px_40px]" />
       </div>
 
-      <section id="features" className="mx-auto max-w-6xl px-6 pb-24 pt-20 sm:px-10">
-        <div className="text-center">
-          <p className="text-sm uppercase tracking-[0.35em] text-[#ff3b70]">Platform Features</p>
-          <h2 className="mt-6 text-4xl font-extrabold text-white sm:text-5xl">Powerful tools for every live experience.</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-base leading-8 text-[#9ca3af]">
-            Everything you need to manage and grow your event brand, all in one secure platform.
+      {/* Header (Screenshot Navbar) */}
+      <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6 sm:px-10">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[#ff3b70] to-[#8b5cf6] flex items-center justify-center shadow-lg shadow-[#ff3b70]/10">
+            <span className="text-white text-xs font-extrabold font-mono">EP</span>
+          </div>
+          <span className="text-sm font-extrabold text-white tracking-wider font-mono">Electric Pulse</span>
+        </div>
+
+        <nav className="hidden md:flex items-center gap-8 text-xs font-bold tracking-wider text-[#8b8b9a] uppercase">
+          <a href="#" className="text-white border-b-2 border-[#ff3b70] pb-1">Home</a>
+          <a href="#features" className="hover:text-white transition-colors">Features</a>
+          <a href="#events" className="hover:text-white transition-colors">Events</a>
+          <a href="#support" className="hover:text-white transition-colors">Support</a>
+        </nav>
+
+        <div className="flex items-center gap-3">
+          {isLoggedIn ? (
+            <>
+              <Link
+                href="/user"
+                className="w-8.5 h-8.5 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center text-[#8b8b9a] hover:text-white transition-all"
+              >
+                <Bell className="w-4 h-4" />
+              </Link>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("token");
+                  localStorage.removeItem("user");
+                  setIsLoggedIn(false);
+                }}
+                className="rounded-xl border border-[#26262f] bg-[#ff3b70]/10 text-xs font-bold px-4 py-2 text-[#ff3b70] hover:bg-[#ff3b70]/20 transition-all cursor-pointer"
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="rounded-xl border border-[#26262f] bg-[#141419] px-4.5 py-2.5 text-xs font-bold text-white hover:border-[#ff3b70]/30 transition-all"
+              >
+                Login
+              </Link>
+              <Link
+                href="/register"
+                className="rounded-xl bg-[#ff3b70] px-4.5 py-2.5 text-xs font-bold text-white shadow-lg shadow-[#ff3b70]/15 hover:bg-[#ff5c8a] transition-all"
+              >
+                Register
+              </Link>
+            </>
+          )}
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="relative z-10 mx-auto max-w-6xl px-6 py-28 sm:px-10 text-center flex flex-col items-center">
+        <div className="max-w-2xl space-y-6">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold leading-tight tracking-tight text-white">
+            Experience the <span className="gradient-text font-mono">Pulse of Future</span> Events
+          </h1>
+          
+          <p className="text-xs sm:text-sm text-[#8b8b9a] leading-relaxed max-w-lg mx-auto font-medium">
+            The ultimate platform for ticketing, artist management, and real-time analytics. Step into the future of live entertainment.
+          </p>
+
+          <div className="pt-4">
+            <Link
+              href={isLoggedIn ? "/user" : "/login"}
+              className="inline-flex items-center gap-2 py-4 px-8 rounded-full text-xs font-extrabold text-white gradient-btn shadow-lg shadow-[#ff3b70]/25 hover:scale-[1.02] transition-all"
+            >
+              <span>Jelajahi Event</span>
+              <ArrowRight className="w-4 h-4 stroke-[3]" />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section id="features" className="relative z-10 mx-auto max-w-6xl px-6 py-16 sm:px-10">
+        <div className="text-center space-y-2 mb-12">
+          <h2 className="text-2xl font-extrabold text-white font-mono">
+            Platform <span className="text-[#06b6d4]">Features</span>
+          </h2>
+          <p className="text-xs text-[#8b8b9a] max-w-md mx-auto font-semibold">
+            Everything you need to manage and experience world-class events.
           </p>
         </div>
 
-        <div className="mt-14 grid gap-6 md:grid-cols-3">
-          {features.map((feature) => (
-            <div key={feature.title} className="rounded-[2rem] border border-white/10 bg-[#0d0d14]/90 p-8 shadow-[0_25px_80px_rgba(0,0,0,0.18)] hover:border-[#ff3b70]/20 transition">
-              <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-3xl bg-[#111019] text-2xl shadow-lg shadow-[#ff3b70]/10">
-                {feature.icon}
+        <div className="grid gap-6 md:grid-cols-3">
+          {features.map((feature, idx) => {
+            const Icon = feature.icon;
+            return (
+              <div
+                key={idx}
+                className="rounded-3xl border border-white/5 bg-[#0d0d14]/90 p-8 shadow-xl transition-all duration-300 hover:border-[#ff3b70]/20 hover:-translate-y-0.5"
+              >
+                <div className={`mb-6 inline-flex h-11 w-11 items-center justify-center rounded-2xl border ${feature.color}`}>
+                  <Icon className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-extrabold text-white mb-2 tracking-wide">{feature.title}</h3>
+                <p className="text-xs leading-relaxed text-[#8b8b9a] font-medium">{feature.description}</p>
               </div>
-              <h3 className="text-xl font-semibold text-white">{feature.title}</h3>
-              <p className="mt-3 text-sm leading-7 text-[#9ca3af]">{feature.description}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
-      <section id="events" className="mx-auto max-w-6xl px-6 pb-24 sm:px-10">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      {/* Popular Events Section */}
+      <section id="events" className="relative z-10 mx-auto max-w-6xl px-6 py-16 sm:px-10">
+        <div className="flex items-end justify-between mb-8 border-b border-[#26262f]/45 pb-4">
           <div>
-            <p className="text-sm uppercase tracking-[0.35em] text-[#ff3b70]">Popular Events</p>
-            <h2 className="mt-3 text-3xl font-extrabold text-white sm:text-4xl">Trending experiences you can’t miss.</h2>
+            <h2 className="text-2xl font-extrabold text-white font-mono">
+              Popular <span className="text-[#ff3b70]">Events</span>
+            </h2>
+            <p className="text-xs text-[#8b8b9a] font-semibold mt-1">Trending shows you don&apos;t want to miss.</p>
           </div>
-          <Link href="/events" className="text-sm font-semibold text-[#ff3b70] hover:text-[#ffa3c9] transition">
-            View all →
+          <Link
+            href={isLoggedIn ? "/user" : "/login"}
+            className="text-xs font-bold text-[#ff3b70] hover:text-[#ff5c8a] hover:underline transition-all flex items-center gap-1.5"
+          >
+            <span>View All</span>
+            <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
-        <div className="mt-10 grid gap-6 lg:grid-cols-4">
-          {events.slice(0, 4).map((item) => (
-            <div key={item.name} className="group relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#0f0f18]/90 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.25)] transition hover:-translate-y-1 hover:border-[#ff3b70]/20">
-              <div className="mb-5 h-44 rounded-[1.75rem] bg-cover bg-center bg-[linear-gradient(180deg,rgba(0,0,0,0.2),rgba(0,0,0,0.8)),url('https://images.unsplash.com/photo-1497032205916-ac775f0649ae?auto=format&fit=crop&w=800&q=80')]" />
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs uppercase tracking-[0.32em] text-[#8b8b9a]">
-                  <span>{item.date}</span>
-                  <span>{item.category}</span>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {events.map((item, idx) => (
+            <div
+              key={idx}
+              className="group bg-[#0d0d14]/90 border border-white/5 rounded-3xl overflow-hidden shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-[#ff3b70]/25"
+            >
+              {/* Event Image */}
+              <div
+                className="h-44 bg-cover bg-center shrink-0 relative"
+                style={{ backgroundImage: `url('${item.image}')` }}
+              >
+                {/* Badge Overlay */}
+                <div className="absolute top-4 right-4">
+                  <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-extrabold border tracking-wider ${
+                    item.status === "ACTIVE"
+                      ? "bg-cyan-500/10 border-cyan-400/30 text-cyan-400"
+                      : item.status === "SOLD OUT"
+                      ? "bg-[#26262f]/50 border-white/10 text-[#8b8b9a]"
+                      : "bg-red-500/10 border-red-400/30 text-red-400"
+                  }`}>
+                    {item.status}
+                  </span>
                 </div>
-                <h3 className="text-xl font-semibold text-white">{item.name}</h3>
-                <p className="text-sm text-[#9ca3af]">{item.venue}</p>
+              </div>
+              
+              {/* Details */}
+              <div className="p-5 space-y-3.5">
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold font-mono">{item.category}</span>
+                  <h3 className="text-sm font-extrabold text-white mt-0.5 group-hover:text-[#ff3b70] transition-colors leading-tight">{item.name}</h3>
+                  <p className="text-[10px] text-[#50505f] font-bold mt-0.5 font-mono">{item.artist}</p>
+                </div>
+
+                <div className="flex flex-col gap-1 border-t border-[#26262f]/45 pt-3 text-[11px] font-medium text-[#8b8b9a] font-mono">
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#ff3b70]/70" />
+                    {item.date}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#ff3b70]/70" />
+                    {item.venue}
+                  </span>
+                </div>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      <section id="support" className="mx-auto max-w-6xl px-6 pb-24 sm:px-10">
-        <div className="grid gap-10 lg:grid-cols-2">
-          <div className="rounded-[2rem] border border-white/10 bg-[#0d0d14]/90 p-10 shadow-[0_25px_80px_rgba(0,0,0,0.22)]">
-            <p className="text-sm uppercase tracking-[0.35em] text-[#ff3b70]">Need Help?</p>
-            <h3 className="mt-4 text-3xl font-extrabold text-white">Support that keeps your events moving.</h3>
-            <p className="mt-4 text-base leading-8 text-[#9ca3af]">
-              Our support team is ready to help with setup, billing, and live event operations whenever you need it.
-            </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/support" className="inline-flex items-center justify-center rounded-full bg-[#ff3b70] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ff3b70]/20 transition hover:bg-[#ff5c8a]">
-                Hubungi Support
-              </Link>
-            </div>
-          </div>
-          <div className="rounded-[2rem] border border-white/10 bg-[#0d0d14]/90 p-10 shadow-[0_25px_80px_rgba(0,0,0,0.22)]">
-            <p className="text-sm uppercase tracking-[0.35em] text-[#8b8b9a]">Need an answer?</p>
-            <h3 className="mt-4 text-3xl font-extrabold text-white">Frequently asked questions.</h3>
-            <div className="mt-8 space-y-4 text-sm text-[#c7c7d4]">
-              <div className="rounded-3xl border border-white/10 bg-[#111019] p-5">How do I create an event?</div>
-              <div className="rounded-3xl border border-white/10 bg-[#111019] p-5">Can I manage tickets and artists in one place?</div>
-              <div className="rounded-3xl border border-white/10 bg-[#111019] p-5">What payment methods are supported?</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <footer className="border-t border-white/10 bg-[#05050d]/90 px-6 py-8 text-[#8b8b9a] sm:px-10">
-        <div className="mx-auto flex flex-col gap-4 md:flex-row md:items-center md:justify-between max-w-6xl">
-          <p className="text-sm">© 2026 Electric Pulse. All rights reserved.</p>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <a href="#" className="hover:text-white transition">Privacy Policy</a>
-            <a href="#" className="hover:text-white transition">Terms of Service</a>
-            <a href="#" className="hover:text-white transition">Contact Us</a>
+      {/* Footer */}
+      <footer className="relative z-10 border-t border-[#26262f]/45 bg-[#05050d] py-8 text-[11px] text-[#8b8b9a] font-semibold">
+        <div className="mx-auto flex flex-col gap-4 md:flex-row md:items-center md:justify-between max-w-6xl px-6 sm:px-10">
+          <p>© 2026 Electric Pulse. All rights reserved.</p>
+          <div className="flex items-center flex-wrap gap-6">
+            <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="#" className="hover:text-white transition-colors">Contact Us</a>
+            <button
+              onClick={() => triggerNotification("Share link copied to clipboard.")}
+              className="text-[#8b8b9a] hover:text-white transition-colors p-1"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </footer>

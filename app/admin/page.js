@@ -34,51 +34,120 @@ import {
   Ticket,
   Clock,
   UserCheck,
-  AlertTriangle,
   Download,
   Sparkles,
-  Info
+  Info,
+  User,
+  UserCircle,
+  Shield
 } from "lucide-react";
 import Chart from "../../components/Chart";
 import Instagram from "../../components/Instagram";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+
+const DEFAULT_PAYMENTS = [
+  {
+    orderId: "#VB-882810",
+    user: "Budi Santoso",
+    avatar: "BS",
+    event: "Born Pink World Tour",
+    totalBayar: 1560000,
+    status: "PENDING",
+    transferSlip: true
+  },
+  {
+    orderId: "#VB-882895",
+    user: "Sarah Wijaya",
+    avatar: "SW",
+    event: "Dua Lipa: Radical Optimism",
+    totalBayar: 2100000,
+    status: "PAID",
+    transferSlip: true
+  },
+  {
+    orderId: "#VB-882852",
+    user: "Michael Chen",
+    avatar: "MC",
+    event: "Java Jazz Festival 2024",
+    totalBayar: 850000,
+    status: "REJECTED",
+    transferSlip: true
+  },
+  {
+    orderId: "#VB-882744",
+    user: "Anisa Rahma",
+    avatar: "AR",
+    event: "LANY Jakarta Tour",
+    totalBayar: 1250000,
+    status: "PAID",
+    transferSlip: false
+  }
+];
+
 export default function Home() {
   const router = useRouter();
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
   // Authentication State
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [adminUser, setAdminUser] = useState(null);
+  const [payments, setPayments] = useState(DEFAULT_PAYMENTS);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    const currentUser = localStorage.getItem("user");
+    const timeout = setTimeout(() => {
+      const token = localStorage.getItem("token");
+      const currentUser = localStorage.getItem("user");
 
-    if (!token || !currentUser) {
-      router.replace("/");
-      return;
-    }
-
-    try {
-      const parsedUser = JSON.parse(currentUser);
-      if (parsedUser.role && String(parsedUser.role).toLowerCase() === "admin") {
-        setAdminUser(parsedUser);
-        setIsLoggedIn(true);
-      } else {
+      if (!token || !currentUser) {
         router.replace("/");
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      router.replace("/");
-    } finally {
-      setIsAuthChecked(true);
-    }
+
+      try {
+        const parsedUser = JSON.parse(currentUser);
+        if (parsedUser.role && String(parsedUser.role).toLowerCase().includes("admin")) {
+          setAdminUser(parsedUser);
+          setIsLoggedIn(true);
+        } else {
+          router.replace("/");
+        }
+      } catch (err) {
+        console.error(err);
+        router.replace("/");
+      } finally {
+        setIsAuthChecked(true);
+      }
+    }, 0);
+    return () => clearTimeout(timeout);
   }, [router]);
 
+  // Fetch real payment history from API when logged in
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const token = localStorage.getItem("token");
+    fetch(`${API_BASE}/api/payments`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          const mapped = data.map((p, idx) => ({
+            orderId: p.orderId || `#VB-${100000 + idx}`,
+            user: p.user_name || "Unknown",
+            avatar: (p.user_name || "U").substring(0, 2).toUpperCase(),
+            event: p.event_name || `Event #${p.event_id || "?"}`,
+            totalBayar: Number(p.totalBayar) || 0,
+            status: p.status || "PENDING"
+          }));
+          setPayments(mapped);
+        }
+      })
+      .catch((err) => console.error("Gagal mengambil riwayat pembayaran:", err));
+  }, [isLoggedIn]);
+
   // Navigation State
-  const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, event, artis, kategori, pembayaran, laporan
-  const [eventSubView, setEventSubView] = useState("list"); // list, add
+  const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, event, artis, kategori, pembayaran, laporan  const [eventSubView, setEventSubView] = useState("list"); // list, add
   const [artistSubView, setArtistSubView] = useState("grid"); // grid, add
 
   // Notification State
@@ -198,63 +267,8 @@ export default function Home() {
     activeEvents: 1
   });
 
-  // Mock Payments State (Verifikasi Pembayaran view)
-  const [payments, setPayments] = useState([
-    {
-      orderId: "#VB-882810",
-      user: "Budi Santoso",
-      avatar: "BS",
-      event: "Born Pink World Tour",
-      totalBayar: 1560000,
-      status: "PENDING",
-      transferSlip: true
-    },
-    {
-      orderId: "#VB-882895",
-      user: "Sarah Wijaya",
-      avatar: "SW",
-      event: "Dua Lipa: Radical Optimism",
-      totalBayar: 2100000,
-      status: "PAID",
-      transferSlip: true
-    },
-    {
-      orderId: "#VB-882852",
-      user: "Michael Chen",
-      avatar: "MC",
-      event: "Java Jazz Festival 2024",
-      totalBayar: 850000,
-      status: "REJECTED",
-      transferSlip: true
-    },
-    {
-      orderId: "#VB-882744",
-      user: "Anisa Rahma",
-      avatar: "AR",
-      event: "LANY Jakarta Tour",
-      totalBayar: 1250000,
-      status: "PAID",
-      transferSlip: false
-    }
-  ]);
-
-  // Active Payment Details Modal State
-  const [activePaymentModal, setActivePaymentModal] = useState(null);
-
-  // Gateway payment form state
-  const [paymentForm, setPaymentForm] = useState({
-    user: "",
-    email: "",
-    event: "",
-    totalBayar: "",
-    gateway: "MockPay"
-  });
-  const [gatewayResponse, setGatewayResponse] = useState(null);
-  const [checkoutOrder, setCheckoutOrder] = useState("");
-  const [checkoutResponse, setCheckoutResponse] = useState(null);
-
-  // Payments verification metrics
-  const [verifiedRevenueToday, setVerifiedRevenueToday] = useState(45200000); // Rp 45.2M starting value
+  // Payments history metrics
+  const verifiedRevenueToday = 45200000; // Rp 45.2M starting value
 
   // SVG Donut Chart Hover segment state (Reports view)
   const [hoveredDonutSegment, setHoveredDonutSegment] = useState(null);
@@ -294,6 +308,15 @@ export default function Home() {
     setTimeout(() => {
       setShowNotification(false);
     }, 4000);
+  };
+
+  // Logout handler (clears session and redirects to login)
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setIsLoggedIn(false);
+    triggerNotification("Log out berhasil.");
+    setTimeout(() => router.replace("/"), 400);
   };
 
   // Save Event Handler
@@ -417,90 +440,6 @@ export default function Home() {
     }
   };
 
-  // Approve Payment Handler
-  const handleApprovePayment = (orderId) => {
-    const payment = payments.find(p => p.orderId === orderId);
-    if (!payment) return;
-
-    setPayments(payments.map(p => {
-      if (p.orderId === orderId) {
-        return { ...p, status: "PAID" };
-      }
-      return p;
-    }));
-
-    // Add to daily total
-    setVerifiedRevenueToday(prev => prev + payment.totalBayar);
-    setActivePaymentModal(null);
-    triggerNotification(`Pembayaran ${orderId} disetujui. Tiket telah diterbitkan.`);
-  };
-
-  // Reject Payment Handler
-  const handleRejectPayment = (orderId) => {
-    setPayments(payments.map(p => {
-      if (p.orderId === orderId) {
-        return { ...p, status: "REJECTED" };
-      }
-      return p;
-    }));
-    setActivePaymentModal(null);
-    triggerNotification(`Pembayaran ${orderId} ditolak. Notifikasi dikirim ke pembeli.`);
-  };
-
-  // Create Payment Gateway Link Handler
-  const handleCreateGatewayPayment = async (e) => {
-    e.preventDefault();
-    if (!paymentForm.user || !paymentForm.email || !paymentForm.event || !paymentForm.totalBayar) {
-      triggerNotification("Lengkapi semua data pembayaran gateway terlebih dahulu.");
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE}/api/payments/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(paymentForm)
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Gagal membuat link pembayaran.");
-      }
-
-      setGatewayResponse(data);
-      setPayments([data.payment, ...payments]);
-      setCheckoutOrder(data.payment.orderId);
-      triggerNotification("Link pembayaran gateway berhasil dibuat.");
-    } catch (error) {
-      console.error(error);
-      triggerNotification(error.message || "Gagal membuat link pembayaran gateway.");
-    }
-  };
-
-  // Checkout via gateway simulation
-  const handleCheckoutGateway = async () => {
-    if (!checkoutOrder) {
-      triggerNotification("Masukkan Order ID untuk menyelesaikan pembayaran.");
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE}/api/payments/${checkoutOrder}/checkout`, {
-        method: "POST"
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Gagal menyelesaikan pembayaran gateway.");
-      }
-
-      setCheckoutResponse(data);
-      setPayments(payments.map((p) => p.orderId === checkoutOrder ? data.payment : p));
-      triggerNotification(`Pembayaran ${checkoutOrder} berhasil diselesaikan.`);
-    } catch (error) {
-      console.error(error);
-      triggerNotification(error.message || "Gagal menyelesaikan pembayaran gateway.");
-    }
-  };
-
   // Dynamic Potential Revenue for Add Form
   const potentialRevenue = eventForm.ticketPrice * eventForm.quota;
 
@@ -573,7 +512,7 @@ export default function Home() {
     );
   });
 
-  // Dynamic values based on payments verification states
+  // Dynamic values based on payments history states
   const pendingPaymentsCount = payments.filter(p => p.status === "PENDING").length;
 
   // Custom Artist Avatar Renderers matching the screenshots
@@ -639,96 +578,6 @@ export default function Home() {
           >
             <X className="w-4 h-4" />
           </button>
-        </div>
-      )}
-
-      {/* Verification Dialog Drawer overlay for Payment verification */}
-      {activePaymentModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-[#141419] border border-[#26262f] rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-slide-up">
-            <button 
-              onClick={() => setActivePaymentModal(null)}
-              className="absolute right-4 top-4 text-[#8b8b9a] hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-lg font-bold text-white mb-1">Verifikasi Detail Transaksi</h3>
-            <p className="text-xs text-[#8b8b9a] mb-5 border-b border-[#26262f]/40 pb-3">Konfirmasi kesesuaian nominal dengan bukti transfer bank.</p>
-            
-            {/* Payment info detail */}
-            <div className="flex flex-col gap-3.5 mb-6 text-xs">
-              <div className="flex justify-between border-b border-[#26262f]/30 pb-2">
-                <span className="text-[#8b8b9a]">ID Transaksi:</span>
-                <span className="text-white font-bold font-mono">{activePaymentModal.orderId}</span>
-              </div>
-              <div className="flex justify-between border-b border-[#26262f]/30 pb-2">
-                <span className="text-[#8b8b9a]">Nama Pengirim:</span>
-                <span className="text-white font-bold">{activePaymentModal.user}</span>
-              </div>
-              <div className="flex justify-between border-b border-[#26262f]/30 pb-2">
-                <span className="text-[#8b8b9a]">Target Event:</span>
-                <span className="text-white font-bold">{activePaymentModal.event}</span>
-              </div>
-              <div className="flex justify-between border-b border-[#26262f]/30 pb-2">
-                <span className="text-[#8b8b9a]">Nominal Bayar:</span>
-                <span className="text-[#10b981] font-extrabold font-mono text-sm">{formatIDR(activePaymentModal.totalBayar)}</span>
-              </div>
-            </div>
-
-            {/* Bank Transfer Slip Mock Preview */}
-            <div className="bg-[#09090b] border border-[#26262f] rounded-xl p-5 mb-6 flex flex-col gap-2.5">
-              <span className="text-[9px] font-bold text-[#ff3b70] tracking-wider uppercase">BUKTI TRANSFER DIGITAL</span>
-              {activePaymentModal.transferSlip ? (
-                <div className="bg-[#141419] border border-[#26262f] rounded p-4 flex flex-col gap-2 font-mono text-[9px] text-[#8b8b9a]">
-                  <div className="flex justify-between text-white font-bold pb-1.5 border-b border-[#26262f]/45">
-                    <span>M-TRANSFER SUCCESS</span>
-                    <span className="text-emerald-400">OK</span>
-                  </div>
-                  <div className="flex justify-between mt-1">
-                    <span>TANGGAL:</span>
-                    <span className="text-white font-semibold">03/08/2026</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>KE REKENING:</span>
-                    <span className="text-white font-semibold">BCA - 0292881829</span>
-                  </div>
-                  <div className="flex justify-between text-[#ff3b70] font-bold mt-1">
-                    <span>JUMLAH:</span>
-                    <span className="font-mono">Rp {activePaymentModal.totalBayar.toLocaleString("id-ID")}</span>
-                  </div>
-                  <div className="flex justify-between mt-0.5">
-                    <span>DARI:</span>
-                    <span className="text-white font-semibold">{activePaymentModal.user.toUpperCase()}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="py-8 flex flex-col items-center justify-center text-[#8b8b9a] text-center gap-2">
-                  <AlertTriangle className="w-8 h-8 text-amber-500" />
-                  <span className="text-[11px] font-bold">Bukti transfer belum diupload pembeli</span>
-                </div>
-              )}
-            </div>
-
-            {/* Form actions */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleRejectPayment(activePaymentModal.orderId)}
-                className="flex-1 py-3 border border-[#26262f] hover:border-[#ff3b70]/40 text-[#ff3b70] hover:bg-[#ff3b70]/5 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                Tolak Pembayaran
-              </button>
-              <button
-                onClick={() => handleApprovePayment(activePaymentModal.orderId)}
-                disabled={!activePaymentModal.transferSlip}
-                className={`flex-1 py-3 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/10 flex items-center justify-center gap-1.5 cursor-pointer ${
-                  !activePaymentModal.transferSlip ? "opacity-50 pointer-events-none" : ""
-                }`}
-              >
-                <Check className="w-4 h-4 stroke-[3]" />
-                <span>Setujui Pembayaran</span>
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -805,8 +654,10 @@ export default function Home() {
               { id: "event", label: "Event", icon: Calendar },
               { id: "artis", label: "Artis", icon: Users },
               { id: "kategori", label: "Kategori", icon: FolderKanban },
-              { id: "pembayaran", label: "Pembayaran", icon: CreditCard },
-              { id: "laporan", label: "Laporan", icon: BarChart3 }
+              { id: "pembayaran", label: "Riwayat Pembayaran Tiket", icon: CreditCard },
+              { id: "laporan", label: "Laporan", icon: BarChart3 },
+              { id: "profil", label: "Profil", icon: User },
+              { id: "pengaturan", label: "Pengaturan", icon: Settings }
             ].map((item) => {
               const IconComp = item.icon;
               const isActive = activeTab === item.id;
@@ -848,21 +699,22 @@ export default function Home() {
           )}
 
           <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setActiveTab("profil")}
+              className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer group"
+              title="Buka Profil"
+            >
               <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-rose-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-inner">
-                AU
+                {(adminUser?.name || "AU").substring(0, 2).toUpperCase()}
               </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-bold text-white leading-none">Admin User</span>
-                <span className="text-[9px] text-[#ff3b70] font-semibold uppercase leading-none mt-0.5">Master Admin</span>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-xs font-bold text-white leading-none truncate">{adminUser?.name || "Admin User"}</span>
+                <span className="text-[9px] text-[#ff3b70] font-semibold uppercase leading-none mt-0.5">Admin</span>
               </div>
-            </div>
+            </button>
             
             <button 
-              onClick={() => {
-                setIsLoggedIn(false);
-                triggerNotification("Log out berhasil.");
-              }}
+              onClick={handleLogout}
               className="text-[#8b8b9a] hover:text-white transition-colors cursor-pointer"
               title="Logout"
             >
@@ -912,8 +764,9 @@ export default function Home() {
 
             {/* Settings button */}
             <button 
-              onClick={() => triggerNotification("Settings console is under maintenance.")}
+              onClick={() => setActiveTab("pengaturan")}
               className="w-9 h-9 rounded-xl border border-[#26262f] bg-[#141419]/90 flex items-center justify-center text-[#8b8b9a] hover:text-white hover:border-[#ff3b70]/30 transition-all cursor-pointer"
+              title="Pengaturan"
             >
               <Settings className="w-4 h-4" />
             </button>
@@ -923,10 +776,7 @@ export default function Home() {
 
             {/* Logout Button */}
             <button
-              onClick={() => {
-                setIsLoggedIn(false);
-                triggerNotification("Log out berhasil.");
-              }}
+              onClick={handleLogout}
               className="px-4 py-2 rounded-xl text-xs font-semibold border border-[#26262f] hover:border-[#ff3b70]/30 hover:bg-[#ff3b70]/5 text-[#f4f4f5] transition-all cursor-pointer"
             >
               Logout
@@ -943,7 +793,7 @@ export default function Home() {
               <div>
                 <h1 className="text-3xl font-extrabold tracking-tight text-white">Ringkasan Dashboard</h1>
                 <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
-                  Selamat datang kembali, <span className="text-[#ff3b70] font-bold">Alex</span>. Inilah performa Electric Pulse hari ini.
+                  Selamat datang kembali, <span className="text-[#ff3b70] font-bold">{adminUser?.name || "Alex"}</span>. Inilah performa Electric Pulse hari ini.
                 </p>
               </div>
 
@@ -1931,34 +1781,34 @@ export default function Home() {
             </div>
           )}
 
-          {/* ==================== E. PAYMENTS VIEW (NEWLY ADDED PAGE) ==================== */}
+          {/* ==================== E. PAYMENTS VIEW (RIWAYAT PEMBAYARAN TIKET) ==================== */}
           {activeTab === "pembayaran" && (
             <div className="flex flex-col gap-8 animate-fade-in">
               <div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-white">Verifikasi Pembayaran</h1>
-                <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">Tinjau dan konfirmasi bukti transfer dari para pembeli tiket.</p>
+                <h1 className="text-3xl font-extrabold tracking-tight text-white">Riwayat Pembayaran Tiket</h1>
+                <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">Daftar seluruh transaksi pembayaran tiket dari para pembeli.</p>
               </div>
 
               {/* Grid 3 stats cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {/* 1. Menunggu verifikasi */}
+                {/* 1. Menunggu pembayaran */}
                 <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 relative overflow-hidden group">
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Menunggu Verifikasi</span>
+                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Menunggu Pembayaran</span>
                     <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/15">
                       <Clock className="w-4 h-4" />
                     </div>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-2xl font-extrabold text-white font-mono leading-none">{pendingPaymentsCount}</span>
-                    <span className="text-[9px] text-[#8b8b9a] mt-2 font-medium">Transaksi pending butuh audit</span>
+                    <span className="text-[9px] text-[#8b8b9a] mt-2 font-medium">Transaksi menunggu pembayaran pembeli</span>
                   </div>
                 </div>
 
-                {/* 2. Total Terverifikasi Hari Ini */}
+                {/* 2. Total Terbayar Hari Ini */}
                 <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 relative overflow-hidden group">
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Total Terverifikasi Hari Ini</span>
+                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Total Terbayar Hari Ini</span>
                     <div className="w-8 h-8 rounded-xl bg-[#ff3b70]/10 text-[#ff3b70] flex items-center justify-center border border-[#ff3b70]/15">
                       <Wallet className="w-4 h-4" />
                     </div>
@@ -1969,10 +1819,10 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 3. Pengguna Aktif */}
+                {/* 3. Total Transaksi */}
                 <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 relative overflow-hidden group">
                   <div className="flex items-center justify-between mb-4">
-                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Pengguna Aktif</span>
+                    <span className="text-[10px] text-[#8b8b9a] font-bold tracking-wider uppercase">Total Transaksi</span>
                     <div className="w-8 h-8 rounded-xl bg-teal-500/10 text-teal-400 flex items-center justify-center border border-teal-500/15">
                       <Users className="w-4 h-4" />
                     </div>
@@ -1984,123 +1834,12 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Gateway Payment Creation card */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
-                  <div className="flex items-center justify-between mb-5">
-                    <div>
-                      <h3 className="text-xl font-extrabold text-white">Buat Link Pembayaran</h3>
-                      <p className="text-xs text-[#8b8b9a] mt-1">Buat sesi pembayaran gateway untuk event dan kirim ke pembeli.</p>
-                    </div>
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-[#8b8b9a] font-bold">Gateway</span>
-                  </div>
-
-                  <form onSubmit={handleCreateGatewayPayment} className="grid gap-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <input
-                        type="text"
-                        placeholder="Nama Pembeli"
-                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
-                        value={paymentForm.user}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, user: e.target.value })}
-                      />
-                      <input
-                        type="email"
-                        placeholder="Email Pembeli"
-                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
-                        value={paymentForm.email}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, email: e.target.value })}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <input
-                        type="text"
-                        placeholder="Nama Event"
-                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
-                        value={paymentForm.event}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, event: e.target.value })}
-                      />
-                      <input
-                        type="number"
-                        placeholder="Total Bayar"
-                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
-                        value={paymentForm.totalBayar}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, totalBayar: Number(e.target.value) })}
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <select
-                        className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40"
-                        value={paymentForm.gateway}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, gateway: e.target.value })}
-                      >
-                        <option>MockPay</option>
-                        <option>DemoPay</option>
-                      </select>
-                      <button
-                        type="submit"
-                        className="flex-1 py-3 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.98] transition-transform"
-                      >
-                        Buat Link
-                      </button>
-                    </div>
-
-                    {gatewayResponse && (
-                      <div className="bg-[#0d0d10] border border-[#26262f] rounded-2xl p-4 text-xs text-[#d4d4d8]">
-                        <div className="mb-2 text-white font-semibold">Gateway berhasil dibuat</div>
-                        <div className="mb-2">Provider: {gatewayResponse.provider}</div>
-                        <div className="mb-2">Order ID: {gatewayResponse.payment.orderId}</div>
-                        <div className="mb-3 break-all">Link: <a href={gatewayResponse.gatewayLink} target="_blank" rel="noreferrer" className="text-[#ff3b70] hover:underline">{gatewayResponse.gatewayLink}</a></div>
-                        <div className="text-[10px] text-[#8b8b9a]">Salin link ini lalu berikan ke pembeli untuk menyelesaikan pembayaran.</div>
-                      </div>
-                    )}
-                  </form>
-                </div>
-
-                <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
-                  <div className="flex items-center justify-between mb-5">
-                    <div>
-                      <h3 className="text-xl font-extrabold text-white">Selesaikan Pembayaran</h3>
-                      <p className="text-xs text-[#8b8b9a] mt-1">Simulasikan checkout gateway menggunakan Order ID.</p>
-                    </div>
-                    <span className="text-[10px] uppercase tracking-[0.2em] text-[#8b8b9a] font-bold">Checkout</span>
-                  </div>
-
-                  <div className="grid gap-4">
-                    <input
-                      type="text"
-                      placeholder="Order ID (contoh: PGW-123456-789)"
-                      className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40"
-                      value={checkoutOrder}
-                      onChange={(e) => setCheckoutOrder(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCheckoutGateway}
-                      className="w-full py-3 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.98] transition-transform"
-                    >
-                      Proses Checkout
-                    </button>
-                    {checkoutResponse && (
-                      <div className="bg-[#0d0d10] border border-[#26262f] rounded-2xl p-4 text-xs text-[#d4d4d8]">
-                        <div className="mb-2 text-white font-semibold">Pembayaran selesai</div>
-                        <div className="mb-1">Order: {checkoutResponse.payment.orderId}</div>
-                        <div className="mb-1">Status: {checkoutResponse.payment.status}</div>
-                        <div className="text-[10px] text-[#8b8b9a]">Status transaksi diupdate jadi PAID dan akan muncul di daftar pembayaran.</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
               {/* Payments Table card */}
               <div className="bg-[#141419] border border-[#26262f] rounded-2xl glow-card overflow-hidden">
                 
                 <div className="p-6 border-b border-[#26262f]/45 flex items-center justify-between">
                   <span className="text-xs font-bold tracking-wider text-white uppercase flex items-center gap-2">
-                    <CreditCard className="w-4.5 h-4.5 text-[#ff3b70]" /> Antrian Verifikasi
+                    <CreditCard className="w-4.5 h-4.5 text-[#ff3b70]" /> Riwayat Pembayaran
                   </span>
                   <div className="flex gap-2">
                     <button 
@@ -2128,15 +1867,13 @@ export default function Home() {
                         <th className="py-4 px-6">Nama User</th>
                         <th className="py-4 px-6">Event Name</th>
                         <th className="py-4 px-6">Total Bayar</th>
-                        <th className="py-4 px-6 text-center">Bukti Transfer</th>
                         <th className="py-4 px-6 text-center">Status</th>
-                        <th className="py-4 px-6 text-right">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#26262f]/50">
                       {filteredPayments.length === 0 ? (
                         <tr>
-                          <td colSpan="7" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
+                          <td colSpan="5" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
                             Tidak ada transaksi pembayaran dalam daftar.
                           </td>
                         </tr>
@@ -2176,39 +1913,11 @@ export default function Home() {
                                 Rp {pay.totalBayar.toLocaleString("id-ID")}
                               </td>
 
-                              {/* Transfer Slip Indicator */}
-                              <td className="py-5 px-6 text-center">
-                                {pay.transferSlip ? (
-                                  <div className="w-8 h-10 rounded border border-[#26262f] bg-[#0d0d10] mx-auto p-1 flex flex-col justify-between items-center cursor-pointer hover:border-[#ff3b70]/50 transition-colors" title="Review Slip" onClick={() => setActivePaymentModal(pay)}>
-                                    {/* Small mock document thumbnail inside */}
-                                    <div className="w-full h-1 bg-emerald-500 rounded-sm" />
-                                    <div className="w-4 h-[1px] bg-[#26262f]" />
-                                    <div className="w-3 h-[1px] bg-[#26262f]" />
-                                  </div>
-                                ) : (
-                                  <div className="w-8 h-10 rounded border border-dashed border-[#26262f] bg-[#0d0d10]/40 mx-auto" />
-                                )}
-                              </td>
-
                               {/* Status Badge */}
                               <td className="py-5 px-6 text-center">
                                 <span className={`inline-block px-3 py-1 rounded-full border text-[9px] font-bold tracking-wider leading-none ${payStatusClass}`}>
                                   {pay.status}
                                 </span>
-                              </td>
-
-                              {/* Action Trigger */}
-                              <td className="py-5 px-6 text-right">
-                                {pay.status === "PENDING" ? (
-                                  <button
-                                    onClick={() => setActivePaymentModal(pay)}
-                                    className="text-xs font-extrabold text-[#ff3b70] hover:text-[#ff5c8a] hover:underline transition-all cursor-pointer"
-                                  >
-                                    Verify Details
-                                  </button>
-                                ) : (
-                                  <span className="text-xs text-[#50505f] font-semibold select-none">Verified</span>
-                                )}
                               </td>
                             </tr>
                           );
@@ -2458,6 +2167,192 @@ export default function Home() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== G. PROFILE VIEW (PROFIL ADMIN) ==================== */}
+          {activeTab === "profil" && (
+            <div className="flex flex-col gap-8 animate-fade-in max-w-4xl">
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight text-white">Profil Admin</h1>
+                <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
+                  Kelola informasi akun admin dan keamanan akses konsol.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-4">
+                  <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card flex flex-col items-center text-center gap-3.5">
+                    <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-[#ff3b70] to-[#8b5cf6] flex items-center justify-center text-white text-2xl font-extrabold shadow-lg shadow-[#ff3b70]/20 border-2 border-[#ff3b70]/30">
+                      {(adminUser?.name || "AU").substring(0, 2).toUpperCase()}
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">{adminUser?.name || "Admin User"}</h3>
+                      <p className="text-[11px] text-[#8b8b9a] font-mono mt-1">{adminUser?.email || "admin@electricpulse.com"}</p>
+                    </div>
+                    <span className="px-3 py-1 rounded-full text-[9px] font-extrabold uppercase tracking-wider border border-[#ff3b70]/30 bg-[#ff3b70]/10 text-[#ff3b70]">
+                      Admin
+                    </span>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-8 space-y-6">
+                  {/* Account Info */}
+                  <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                    <div className="flex items-center gap-2 mb-6 border-b border-[#26262f]/40 pb-4">
+                      <UserCircle className="w-4.5 h-4.5 text-[#ff3b70]" />
+                      <h3 className="text-sm font-bold tracking-wider text-white uppercase">Informasi Akun</h3>
+                    </div>
+
+                    <form 
+                      onSubmit={(e) => { e.preventDefault(); triggerNotification("Profil admin berhasil diperbarui!"); }} 
+                      className="grid grid-cols-1 md:grid-cols-2 gap-5"
+                    >
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Nama Lengkap</label>
+                        <input
+                          type="text"
+                          defaultValue={adminUser?.name || "Admin User"}
+                          className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Email</label>
+                        <input
+                          type="email"
+                          defaultValue={adminUser?.email || "admin@electricpulse.com"}
+                          className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
+                        />
+                      </div>
+
+                      <div className="flex justify-end md:col-span-2 pt-2">
+                        <button
+                          type="submit"
+                          className="py-3 px-6 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                        >
+                          Simpan Perubahan
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Security */}
+                  <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                    <div className="flex items-center gap-2 mb-6 border-b border-[#26262f]/40 pb-4">
+                      <Shield className="w-4.5 h-4.5 text-[#ff3b70]" />
+                      <h3 className="text-sm font-bold tracking-wider text-white uppercase">Keamanan</h3>
+                    </div>
+
+                    <form 
+                      onSubmit={(e) => { e.preventDefault(); triggerNotification("Password admin berhasil diperbarui!"); }} 
+                      className="grid grid-cols-1 md:grid-cols-2 gap-5"
+                    >
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Password Lama</label>
+                        <input
+                          type="password"
+                          placeholder="••••••••"
+                          className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Password Baru</label>
+                        <input
+                          type="password"
+                          placeholder="••••••••"
+                          className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
+                        />
+                      </div>
+
+                      <div className="flex justify-end md:col-span-2 pt-2">
+                        <button
+                          type="submit"
+                          className="py-3 px-6 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                        >
+                          Update Password
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== H. SETTINGS VIEW (PENGATURAN ADMIN) ==================== */}
+          {activeTab === "pengaturan" && (
+            <div className="flex flex-col gap-8 animate-fade-in max-w-4xl">
+              <div>
+                <h1 className="text-3xl font-extrabold tracking-tight text-white">Pengaturan</h1>
+                <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
+                  Kelola preferensi konsol admin dan notifikasi sistem.
+                </p>
+              </div>
+
+              <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                <div className="flex items-center gap-2 mb-6 border-b border-[#26262f]/40 pb-4">
+                  <Bell className="w-4.5 h-4.5 text-[#ff3b70]" />
+                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">Notifikasi</h3>
+                </div>
+
+                <div className="flex flex-col gap-5">
+                  {[
+                    { label: "Email Alerts", desc: "Terima ringkasan laporan penjualan harian." },
+                    { label: "Notifikasi Pembayaran", desc: "Diberitahu saat ada transaksi baru menunggu verifikasi." },
+                    { label: "Peringatan Stok Tiket", desc: "Diberitahu saat okupansi tiket mencapai 80%." }
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-white block">{item.label}</span>
+                        <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">{item.desc}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="w-10 h-6 rounded-full bg-[#ff3b70] p-1 transition-colors cursor-pointer"
+                      >
+                        <div className="w-4 h-4 bg-white rounded-full translate-x-4 transition-transform" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
+                <div className="flex items-center gap-2 mb-6 border-b border-[#26262f]/40 pb-4">
+                  <Info className="w-4.5 h-4.5 text-[#ff3b70]" />
+                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">Preferensi Konsol</h3>
+                </div>
+
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-white block">Bahasa Tampilan</span>
+                      <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">Pilih bahasa untuk antarmuka konsol.</span>
+                    </div>
+                    <div className="relative">
+                      <select className="bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer">
+                        <option>Bahasa Indonesia</option>
+                        <option>English</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-white block">Mata Uang</span>
+                      <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">Format nominal pada laporan keuangan.</span>
+                    </div>
+                    <div className="relative">
+                      <select className="bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer">
+                        <option>IDR (Rp)</option>
+                        <option>USD ($)</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

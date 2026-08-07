@@ -71,9 +71,9 @@ export default function LoginBox({ email, setEmail, password, setPassword, handl
             />
             <span className="text-[#8b8b9a] hover:text-white transition-colors">Keep me signed in</span>
           </label>
-          <a href="#" className="text-[#ff3b70] hover:underline hover:text-[#ff5c8a] transition-all font-medium">
+          <Link href="/reset-password" className="text-[#ff3b70] hover:underline hover:text-[#ff5c8a] transition-all font-medium">
             Reset Access?
-          </a>
+          </Link>
         </div>
 
         {/* Submit Button */}

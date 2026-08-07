@@ -1,0 +1,7 @@
+Admin user already exists: admin@electricpulse.com
+User already exists: user@electricpulse.com
+categories already seeded (5 rows).
+artists already seeded (5 rows).
+events already seeded (6 rows).
+payments already seeded (4 rows).
+Backend server is running on http://localhost:5000

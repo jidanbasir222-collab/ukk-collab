@@ -25,7 +25,7 @@ export default function LoginPage() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, {
+      const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
@@ -39,7 +39,7 @@ export default function LoginPage() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));
 
-      if (String(data.user.role).toLowerCase() === "admin") {
+      if (String(data.user.role).toLowerCase().includes("admin")) {
         router.push("/admin");
       } else {
         router.push("/user");

@@ -13,6 +13,7 @@
     "express": "^4.19.2",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
+    "midtrans-client": "^1.4.3",
     "mysql2": "^3.7.0"
   },
   "devDependencies": {

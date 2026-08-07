@@ -1,34 +1,19 @@
 const express = require("express");
 const cors = require("cors");
-const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 require("dotenv").config();
 const db = require("./db");
 const dataStore = require("./data");
+const { snap } = require("./midtrans");
+const {
+  generateToken,
+  authenticateToken,
+  requireRole,
+  normalizeRole
+} = require("./middleware/auth");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "electricpulse-secret";
-const TOKEN_EXPIRES_IN = "2h";
-
-const generateToken = (user) => jwt.sign(user, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
-
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res.status(401).json({ error: "Token tidak ditemukan. Silakan login kembali." });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: "Token tidak valid atau telah kedaluwarsa." });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 // Middleware
 app.use(cors());
@@ -55,16 +40,87 @@ app.post("/api/login", async (req, res) => {
       return res.status(401).json({ error: "Email atau Password salah." });
     }
 
-    const token = generateToken({ id: user.id, email: user.email, role: user.role });
+    const role = normalizeRole(user.role);
+    const token = generateToken({ id: user.id, email: user.email, role });
     return res.json({
       success: true,
       message: "Login successful.",
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, role },
       token
     });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Gagal memproses login." });
+  }
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: "Nama, email, dan password wajib diisi." });
+  }
+
+  try {
+    const existing = await db.query("SELECT id FROM users WHERE email = ?", [email]);
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: "Email sudah terdaftar." });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await db.execute(
+      "INSERT INTO users (name, email, passwordHash, role) VALUES (?, ?, ?, 'user')",
+      [name, email, passwordHash]
+    );
+
+    const token = generateToken({ id: result.insertId, email, role: "user" });
+    return res.status(201).json({
+      success: true,
+      message: "Registrasi berhasil.",
+      user: { id: result.insertId, name, email, role: "user" },
+      token
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Gagal memproses registrasi." });
+  }
+});
+
+// Midtrans webhook notification handler (auto-updates payment status)
+// NOTE: placed before authenticateToken middleware so Midtrans can reach it without a Bearer token
+app.post("/api/payments/notification", async (req, res) => {
+  const { order_id, transaction_status, fraud_status } = req.body;
+
+  if (!order_id || !transaction_status) {
+    return res.status(400).json({ error: "Payload notifikasi tidak valid." });
+  }
+
+  let status = "PENDING";
+  if (transaction_status === "capture" || transaction_status === "settlement") {
+    status = "PAID";
+  } else if (transaction_status === "deny" || transaction_status === "cancel" || transaction_status === "expire") {
+    status = "REJECTED";
+  }
+
+  try {
+    await db.execute(
+      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ?",
+      [status, status === "PAID" ? new Date() : null, order_id]
+    );
+
+    if (status === "PAID") {
+      const [rows] = await db.query("SELECT event_id, ticket_qty FROM payments WHERE orderId = ?", [order_id]);
+      if (rows && rows.event_id) {
+        await db.execute(
+          "UPDATE events SET sold = sold + ? WHERE id = ?",
+          [rows.ticket_qty || 1, rows.event_id]
+        );
+      }
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Gagal memproses notifikasi pembayaran." });
   }
 });
 
@@ -105,7 +161,7 @@ app.get("/api/events", async (req, res) => {
   }
 });
 
-app.post("/api/events", async (req, res) => {
+app.post("/api/events", requireRole("admin"), async (req, res) => {
   const { name, artist, category, date, time, ticketPrice, quota, location, description } = req.body;
   if (!name || !artist || !category || !date || !location) {
     return res.status(400).json({ error: "Field utama event wajib diisi." });
@@ -124,7 +180,7 @@ app.post("/api/events", async (req, res) => {
   }
 });
 
-app.delete("/api/events/:id", async (req, res) => {
+app.delete("/api/events/:id", requireRole("admin"), async (req, res) => {
   try {
     await db.execute("DELETE FROM events WHERE id = ?", [req.params.id]);
     res.json({ success: true, message: "Event berhasil dihapus." });
@@ -145,7 +201,7 @@ app.get("/api/artists", async (req, res) => {
   }
 });
 
-app.post("/api/artists", async (req, res) => {
+app.post("/api/artists", requireRole("admin"), async (req, res) => {
   const { name, genre, instagram, activeEvents } = req.body;
   if (!name || !instagram) {
     return res.status(400).json({ error: "Nama dan Instagram artis wajib diisi." });
@@ -164,7 +220,7 @@ app.post("/api/artists", async (req, res) => {
   }
 });
 
-app.delete("/api/artists/:id", async (req, res) => {
+app.delete("/api/artists/:id", requireRole("admin"), async (req, res) => {
   try {
     await db.execute("DELETE FROM artists WHERE id = ?", [req.params.id]);
     res.json({ success: true, message: "Artis berhasil dihapus." });
@@ -185,7 +241,7 @@ app.get("/api/categories", async (req, res) => {
   }
 });
 
-app.post("/api/categories", async (req, res) => {
+app.post("/api/categories", requireRole("admin"), async (req, res) => {
   const { name, icon, color, description } = req.body;
   if (!name) {
     return res.status(400).json({ error: "Nama kategori wajib diisi." });
@@ -204,7 +260,7 @@ app.post("/api/categories", async (req, res) => {
   }
 });
 
-app.delete("/api/categories/:id", async (req, res) => {
+app.delete("/api/categories/:id", requireRole("admin"), async (req, res) => {
   try {
     await db.execute("DELETE FROM categories WHERE id = ?", [req.params.id]);
     res.json({ success: true, message: "Kategori berhasil dihapus." });
@@ -214,10 +270,12 @@ app.delete("/api/categories/:id", async (req, res) => {
   }
 });
 
-// 6. Payments Verification REST API
+// 6. Payments Gateway REST API (Midtrans Snap)
 app.get("/api/payments", async (req, res) => {
   try {
-    const payments = await db.query("SELECT * FROM payments ORDER BY createdAt DESC");
+    const payments = await db.query(
+      "SELECT p.*, e.name AS event_name FROM payments p LEFT JOIN events e ON p.event_id = e.id ORDER BY p.createdAt DESC"
+    );
     res.json(payments);
   } catch (error) {
     console.error(error);
@@ -225,7 +283,71 @@ app.get("/api/payments", async (req, res) => {
   }
 });
 
-app.post("/api/payments/:orderId/verify", async (req, res) => {
+// Create a Midtrans Snap transaction and store the order in DB
+app.post("/api/payments/create", async (req, res) => {
+  const { user, email, event, eventId, ticketQty, totalBayar } = req.body;
+  if (!user || !email || !event || !ticketQty || !totalBayar) {
+    return res.status(400).json({ error: "Data pembayaran tidak lengkap." });
+  }
+
+  const orderId = `EP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+
+  try {
+    const result = await db.execute(
+      "INSERT INTO payments (orderId, user_name, event_id, ticket_qty, totalBayar, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
+      [orderId, user, eventId || null, Number(ticketQty), Number(totalBayar)]
+    );
+
+    const parameter = {
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: Number(totalBayar)
+      },
+      item_details: [
+        {
+          id: orderId,
+          price: Number(totalBayar),
+          quantity: 1,
+          name: `Tiket ${event}`
+        }
+      ],
+      customer_details: {
+        first_name: user,
+        email
+      },
+      credit_card: {
+        secure: true
+      }
+    };
+
+    const snapResponse = await snap.createTransaction(parameter);
+    res.status(201).json({
+      success: true,
+      payment: { orderId, status: "PENDING" },
+      token: snapResponse.token,
+      redirectUrl: snapResponse.redirect_url
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Gagal membuat transaksi pembayaran." });
+  }
+});
+
+// Poll payment status from frontend after Snap popup
+app.get("/api/payments/:orderId/status", async (req, res) => {
+  try {
+    const [rows] = await db.query("SELECT orderId, status FROM payments WHERE orderId = ?", [req.params.orderId]);
+    if (!rows) {
+      return res.status(404).json({ error: "Transaksi tidak ditemukan." });
+    }
+    res.json({ success: true, orderId: rows.orderId, status: rows.status });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Gagal mengambil status pembayaran." });
+  }
+});
+
+app.post("/api/payments/:orderId/verify", requireRole("admin"), async (req, res) => {
   const { orderId } = req.params;
   const { status } = req.body; // PAID or REJECTED
 
