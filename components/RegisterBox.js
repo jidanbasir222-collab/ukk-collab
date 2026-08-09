@@ -13,7 +13,7 @@ export default function RegisterBox() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://railway.app";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
