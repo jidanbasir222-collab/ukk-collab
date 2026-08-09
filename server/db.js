@@ -2,12 +2,43 @@ const mysql = require("mysql2/promise");
 const bcrypt = require("bcryptjs");
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 
+const parseDbUrl = (url) => {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (!u.hostname) return null;
+    return {
+      host: u.hostname,
+      port: u.port ? Number(u.port) : 3306,
+      user: decodeURIComponent(u.username || "root"),
+      password: decodeURIComponent(u.password || ""),
+      database: (u.pathname || "/").replace(/^\//, "")
+    };
+  } catch (error) {
+    console.error("Gagal parse DATABASE_URL:", error.message);
+    return null;
+  }
+};
+
+const dbUrl = process.env.MYSQL_URL || process.env.DATABASE_URL;
+const parsed = parseDbUrl(dbUrl);
+
+const dbConfig = {
+  host: parsed?.host || process.env.DB_HOST || "127.0.0.1",
+  user: parsed?.user || process.env.DB_USER || "root",
+  password: parsed?.password || process.env.DB_PASSWORD || "",
+  database: parsed?.database || process.env.DB_NAME || "ukkprojek",
+  port: parsed?.port || Number(process.env.DB_PORT || 3306)
+};
+
+if (dbUrl) {
+  console.info(`Menggunakan koneksi database dari URL (host: ${parsed?.host || "?"}).`);
+} else {
+  console.info("Menggunakan koneksi database dari variabel individu (DB_HOST, dst).");
+}
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || "127.0.0.1",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "ukkprojek",
-  port: Number(process.env.DB_PORT || 3306),
+  ...dbConfig,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -30,13 +61,8 @@ const initSchema = async () => {
 
   // 0. Pastikan database ada (dibuat otomatis bila belum ada)
   try {
-    const conn = await mysql.createConnection({
-      host: process.env.DB_HOST || "127.0.0.1",
-      user: process.env.DB_USER || "root",
-      password: process.env.DB_PASSWORD || "",
-      port: Number(process.env.DB_PORT || 3306)
-    });
-    const dbName = process.env.DB_NAME || "ukkprojek";
+    const conn = await mysql.createConnection(dbConfig);
+    const dbName = dbConfig.database;
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci`);
     await conn.end();
     console.info(`Database "${dbName}" siap.`);
