@@ -25,8 +25,14 @@ app.use(
   })
 );
 
-// Pastikan preflight request ter-handle
-app.options("*", cors());
+// Preflight OPTIONS: balas 200 secara eksplisit tanpa lanjut ke middleware/route lain
+app.options("*", (req, res) => {
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type,Authorization,X-Requested-With");
+  res.header("Access-Control-Allow-Credentials", "true");
+  return res.sendStatus(200);
+});
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -656,11 +662,25 @@ app.get("/", (req, res) => {
   res.send("Electric Pulse Console Backend API is running successfully!");
 });
 
+// Global error handler (harus sebelum app.listen)
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal Server Error" });
+});
+
+// Jangan biarkan uncaught exception/unhandled rejection menghentikan server
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+});
+
 const startServer = async () => {
   try {
     await db.initSchema();
-    app.listen(PORT, () => {
-      console.log(`Backend server is running on http://localhost:${PORT}`);
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
     });
   } catch (error) {
     console.error("Database initialization failed:", error);
