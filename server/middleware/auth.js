@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-require("dotenv").config();
+require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
 const JWT_SECRET = process.env.JWT_SECRET || "electricpulse-secret";
 const TOKEN_EXPIRES_IN = "2h";

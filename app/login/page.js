@@ -1,16 +1,32 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import LoginBox from "../../components/LoginBox";
 
 export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen flex items-center justify-center bg-[#09090b] px-4 py-16">
+          <p className="text-sm font-semibold text-white">Memuat halaman login...</p>
+        </main>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next");
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
   const handleLogin = async (e) => {
@@ -41,6 +57,8 @@ export default function LoginPage() {
 
       if (String(data.user.role).toLowerCase().includes("admin")) {
         router.push("/admin");
+      } else if (next) {
+        router.push(next);
       } else {
         router.push("/user");
       }

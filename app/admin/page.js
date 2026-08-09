@@ -93,6 +93,8 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [adminUser, setAdminUser] = useState(null);
   const [payments, setPayments] = useState(DEFAULT_PAYMENTS);
+  const [stats, setStats] = useState(null);
+  const [activity, setActivity] = useState([]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -122,32 +124,9 @@ export default function Home() {
     return () => clearTimeout(timeout);
   }, [router]);
 
-  // Fetch real payment history from API when logged in
-  useEffect(() => {
-    if (!isLoggedIn) return;
-    const token = localStorage.getItem("token");
-    fetch(`${API_BASE}/api/payments`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          const mapped = data.map((p, idx) => ({
-            orderId: p.orderId || `#VB-${100000 + idx}`,
-            user: p.user_name || "Unknown",
-            avatar: (p.user_name || "U").substring(0, 2).toUpperCase(),
-            event: p.event_name || `Event #${p.event_id || "?"}`,
-            totalBayar: Number(p.totalBayar) || 0,
-            status: p.status || "PENDING"
-          }));
-          setPayments(mapped);
-        }
-      })
-      .catch((err) => console.error("Gagal mengambil riwayat pembayaran:", err));
-  }, [isLoggedIn]);
-
   // Navigation State
-  const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, event, artis, kategori, pembayaran, laporan  const [eventSubView, setEventSubView] = useState("list"); // list, add
+  const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, event, artis, kategori, pembayaran, laporan
+  const [eventSubView, setEventSubView] = useState("list"); // list, add
   const [artistSubView, setArtistSubView] = useState("grid"); // grid, add
 
   // Notification State
@@ -267,8 +246,285 @@ export default function Home() {
     activeEvents: 1
   });
 
-  // Payments history metrics
-  const verifiedRevenueToday = 45200000; // Rp 45.2M starting value
+  // Payments history metrics (live from API, fallback to mock baseline)
+  const verifiedRevenueToday = stats ? stats.verifiedRevenueToday : 45200000;
+
+  // Live data refresh helper
+  const refreshEvents = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/events`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setEvents(
+          data.map((e) => ({
+            ...e,
+            id: String(e.id),
+            status: e.status || "ACTIVE",
+            sold: Number(e.sold) || 0,
+            quota: Number(e.quota) || 0,
+            ticketPrice: Number(e.ticketPrice) || 0
+          }))
+        );
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const refreshArtists = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/artists`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setArtists(
+          data.map((a) => ({
+            ...a,
+            id: String(a.id),
+            avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : Math.floor(Math.random() * 3)
+          }))
+        );
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const refreshCategories = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/categories`);
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setCategories(
+          data.map((c, idx) => ({
+            ...c,
+            id: String(c.id),
+            icon: ["music", "zap", "radio", "headphones"][idx % 4] || "music",
+            color: ["pink", "teal", "purple", "peach", "green"][idx % 5] || "pink"
+          }))
+        );
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const refreshPayments = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/payments`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const mapped = data.map((p, idx) => ({
+          orderId: p.orderId || `#VB-${100000 + idx}`,
+          user: p.user_name || "Unknown",
+          avatar: (p.user_name || "U").substring(0, 2).toUpperCase(),
+          event: p.event_name || `Event #${p.event_id || "?"}`,
+          totalBayar: Number(p.totalBayar) || 0,
+          status: p.status || "PENDING",
+          ticketQty: Number(p.ticket_qty) || 1
+        }));
+        setPayments(mapped);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Save Event Handler (POST to API)
+  const handleSaveEvent = async (e) => {
+    e.preventDefault();
+    if (!eventForm.name || !eventForm.artist || !eventForm.category || !eventForm.date || !eventForm.location) {
+      triggerNotification("Lengkapi semua field utama event!");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const payload = {
+        name: eventForm.name,
+        artist: eventForm.artist,
+        category: eventForm.category,
+        date: eventForm.date,
+        time: eventForm.time || "19:00",
+        ticketPrice: Number(eventForm.ticketPrice) || 0,
+        quota: Number(eventForm.quota) || 5000,
+        location: eventForm.location,
+        description: eventForm.description || null,
+        status: eventForm.status || "ACTIVE"
+      };
+
+      let res;
+      if (editingEventId) {
+        res = await fetch(`${API_BASE}/api/events/${editingEventId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch(`${API_BASE}/api/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload)
+        });
+      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menyimpan event.");
+
+      await refreshEvents();
+      setEditingEventId(null);
+      setEventForm({
+        name: "",
+        artist: "",
+        category: "",
+        date: "",
+        time: "",
+        ticketPrice: 0,
+        quota: 5000,
+        location: "",
+        description: "",
+        poster: null,
+        banner: null
+      });
+      setEventSubView("list");
+      triggerNotification(editingEventId ? "Event berhasil diperbarui!" : "Event baru berhasil ditambahkan!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menambahkan event.");
+    }
+  };
+
+  // Delete Event Handler (DELETE to API)
+  const handleDeleteEvent = async (id) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus event ini?")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/events/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus event.");
+      await refreshEvents();
+      triggerNotification("Event berhasil dihapus.");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menghapus event.");
+    }
+  };
+
+  // Save Category Handler (POST to API)
+  const handleSaveCategory = async (e) => {
+    e.preventDefault();
+    if (!categoryForm.name) {
+      triggerNotification("Nama kategori tidak boleh kosong!");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: categoryForm.name,
+          description: categoryForm.description || ""
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menambahkan kategori.");
+
+      await refreshCategories();
+      setCategoryForm({ name: "", icon: "music", color: "pink", description: "" });
+      triggerNotification("Kategori baru berhasil ditambahkan!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menambahkan kategori.");
+    }
+  };
+
+  // Delete Category Handler (DELETE to API)
+  const handleDeleteCategory = async (id) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus kategori ini?")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/categories/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus kategori.");
+      await refreshCategories();
+      triggerNotification("Kategori berhasil dihapus.");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menghapus kategori.");
+    }
+  };
+
+  // Save Artist Handler (POST to API)
+  const handleSaveArtist = async (e) => {
+    e.preventDefault();
+    if (!artistForm.name || !artistForm.instagram) {
+      triggerNotification("Lengkapi nama artis dan instagram handle!");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/artists`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: artistForm.name,
+          genre: artistForm.genre || "SYNTHWAVE",
+          instagram: artistForm.instagram,
+          activeEvents: Number(artistForm.activeEvents) || 0
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mendaftarkan artis.");
+
+      await refreshArtists();
+      setArtistForm({ name: "", genre: "SYNTHWAVE", instagram: "", activeEvents: 1 });
+      setArtistSubView("grid");
+      triggerNotification(`Artis "${data.name || artistForm.name}" berhasil didaftarkan!`);
+    } catch (error) {
+      triggerNotification(error.message || "Gagal mendaftarkan artis.");
+    }
+  };
+
+  // Delete Artist Handler (DELETE to API)
+  const handleDeleteArtist = async (id) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus artis ini dari management?")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/artists/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menghapus artis.");
+      await refreshArtists();
+      triggerNotification("Artis berhasil dihapus.");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menghapus artis.");
+    }
+  };
+
+  // Verify / Reject Payment (POST to API)
+  const handleVerifyPayment = async (orderId, status) => {
+    if (!confirm(`Tandai pembayaran ${orderId} sebagai ${status}?`)) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/payments/${orderId}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal memperbarui status pembayaran.");
+      await refreshPayments();
+      triggerNotification(`Pembayaran ${orderId} ditandai ${status}.`);
+    } catch (error) {
+      triggerNotification(error.message || "Gagal memperbarui status pembayaran.");
+    }
+  };
 
   // SVG Donut Chart Hover segment state (Reports view)
   const [hoveredDonutSegment, setHoveredDonutSegment] = useState(null);
@@ -287,6 +543,7 @@ export default function Home() {
     poster: null,
     banner: null
   });
+  const [editingEventId, setEditingEventId] = useState(null);
 
   // Add Category Form State
   const [categoryForm, setCategoryForm] = useState({
@@ -300,6 +557,124 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   // Artist Filter state
   const [artistGenreFilter, setArtistGenreFilter] = useState("Semua Genre");
+
+  // Fetch live data from API when logged in
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const token = localStorage.getItem("token");
+    const headers = { Authorization: `Bearer ${token}` };
+
+    fetch(`${API_BASE}/api/payments`, { headers })
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          const mapped = data.map((p, idx) => ({
+            orderId: p.orderId || `#VB-${100000 + idx}`,
+            user: p.user_name || "Unknown",
+            avatar: (p.user_name || "U").substring(0, 2).toUpperCase(),
+            event: p.event_name || `Event #${p.event_id || "?"}`,
+            totalBayar: Number(p.totalBayar) || 0,
+            status: p.status || "PENDING",
+            ticketQty: Number(p.ticket_qty) || 1
+          }));
+          setPayments(mapped);
+        } else {
+          setPayments([]);
+        }
+      })
+      .catch((err) => console.error("Gagal mengambil riwayat pembayaran:", err));
+
+    fetch(`${API_BASE}/api/events`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEvents(
+            data.map((e) => ({
+              ...e,
+              id: String(e.id),
+              status: e.status || "ACTIVE",
+              sold: Number(e.sold) || 0,
+              quota: Number(e.quota) || 0,
+              ticketPrice: Number(e.ticketPrice) || 0
+            }))
+          );
+        }
+      })
+      .catch((err) => console.error("Gagal mengambil data event:", err));
+
+    fetch(`${API_BASE}/api/artists`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setArtists(
+            data.map((a) => ({
+              ...a,
+              id: String(a.id),
+              avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : Math.floor(Math.random() * 3)
+            }))
+          );
+        }
+      })
+      .catch((err) => console.error("Gagal mengambil data artis:", err));
+
+    fetch(`${API_BASE}/api/categories`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setCategories(
+            data.map((c, idx) => ({
+              ...c,
+              id: String(c.id),
+              icon: ["music", "zap", "radio", "headphones"][idx % 4] || "music",
+              color: ["pink", "teal", "purple", "peach", "green"][idx % 5] || "pink"
+            }))
+          );
+        }
+      })
+      .catch((err) => console.error("Gagal mengambil data kategori:", err));
+
+    fetch(`${API_BASE}/api/dashboard/stats`, { headers })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && typeof data.totalEvents === "number") setStats(data);
+      })
+      .catch((err) => console.error("Gagal mengambil statistik dashboard:", err));
+
+    fetch(`${API_BASE}/api/dashboard/activity`, { headers })
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setActivity(data);
+      })
+      .catch((err) => console.error("Gagal mengambil aktivitas:", err));
+  }, [isLoggedIn]);
+
+  // Auto-refresh data (polling) tiap 10 detik agar pembayaran/statistik terupdate tanpa F5
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const refreshAll = () => {
+      refreshEvents();
+      refreshArtists();
+      refreshCategories();
+      refreshPayments();
+      const token = localStorage.getItem("token");
+      const headers = { Authorization: `Bearer ${token}` };
+      fetch(`${API_BASE}/api/dashboard/stats`, { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && typeof data.totalEvents === "number") setStats(data);
+        })
+        .catch(() => {});
+      fetch(`${API_BASE}/api/dashboard/activity`, { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) setActivity(data);
+        })
+        .catch(() => {});
+    };
+    refreshAll();
+    const interval = setInterval(refreshAll, 10000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn]);
 
   // Helper trigger notification
   const triggerNotification = (msg) => {
@@ -317,127 +692,6 @@ export default function Home() {
     setIsLoggedIn(false);
     triggerNotification("Log out berhasil.");
     setTimeout(() => router.replace("/"), 400);
-  };
-
-  // Save Event Handler
-  const handleSaveEvent = (e) => {
-    e.preventDefault();
-    if (!eventForm.name || !eventForm.artist || !eventForm.category || !eventForm.date || !eventForm.location) {
-      triggerNotification("Lengkapi semua field utama event!");
-      return;
-    }
-
-    const newEvent = {
-      id: (events.length + 1).toString(),
-      name: eventForm.name,
-      artist: eventForm.artist,
-      category: eventForm.category,
-      date: eventForm.date,
-      time: eventForm.time || "19:00",
-      location: eventForm.location,
-      ticketPrice: Number(eventForm.ticketPrice) || 0,
-      quota: Number(eventForm.quota) || 5000,
-      sold: 0,
-      status: "ACTIVE",
-      poster: eventForm.poster,
-      banner: eventForm.banner
-    };
-
-    setEvents([newEvent, ...events]);
-    setEventForm({
-      name: "",
-      artist: "",
-      category: "",
-      date: "",
-      time: "",
-      ticketPrice: 0,
-      quota: 5000,
-      location: "",
-      description: "",
-      poster: null,
-      banner: null
-    });
-    setEventSubView("list");
-    triggerNotification("Event baru berhasil ditambahkan!");
-  };
-
-  // Delete Event Handler
-  const handleDeleteEvent = (id) => {
-    if (confirm("Apakah Anda yakin ingin menghapus event ini?")) {
-      setEvents(events.filter(ev => ev.id !== id));
-      triggerNotification("Event berhasil dihapus.");
-    }
-  };
-
-  // Save Category Handler
-  const handleSaveCategory = (e) => {
-    e.preventDefault();
-    if (!categoryForm.name) {
-      triggerNotification("Nama kategori tidak boleh kosong!");
-      return;
-    }
-
-    const newCategory = {
-      id: (categories.length + 1).toString(),
-      name: categoryForm.name,
-      description: categoryForm.description || "No description provided.",
-      count: 0,
-      icon: categoryForm.icon,
-      color: categoryForm.color
-    };
-
-    setCategories([...categories, newCategory]);
-    setCategoryForm({
-      name: "",
-      icon: "music",
-      color: "pink",
-      description: ""
-    });
-    triggerNotification("Kategori baru berhasil ditambahkan!");
-  };
-
-  // Delete Category Handler
-  const handleDeleteCategory = (id) => {
-    if (confirm("Apakah Anda yakin ingin menghapus kategori ini?")) {
-      setCategories(categories.filter(cat => cat.id !== id));
-      triggerNotification("Kategori berhasil dihapus.");
-    }
-  };
-
-  // Save Artist Handler
-  const handleSaveArtist = (e) => {
-    e.preventDefault();
-    if (!artistForm.name || !artistForm.instagram) {
-      triggerNotification("Lengkapi nama artis dan instagram handle!");
-      return;
-    }
-
-    const newArtist = {
-      id: (artists.length + 1).toString(),
-      name: artistForm.name,
-      genre: artistForm.genre.toUpperCase(),
-      instagram: artistForm.instagram.startsWith("@") ? artistForm.instagram : `@${artistForm.instagram}`,
-      activeEvents: Number(artistForm.activeEvents) || 0,
-      avatarIndex: Math.floor(Math.random() * 3) // random default avatar design
-    };
-
-    setArtists([...artists, newArtist]);
-    setArtistForm({
-      name: "",
-      genre: "SYNTHWAVE",
-      instagram: "",
-      activeEvents: 1
-    });
-    setArtistSubView("grid");
-    triggerNotification(`Artis "${newArtist.name}" berhasil didaftarkan!`);
-  };
-
-  // Delete Artist Handler
-  const handleDeleteArtist = (id) => {
-    if (confirm("Apakah Anda yakin ingin menghapus artis ini dari management?")) {
-      setArtists(artists.filter(art => art.id !== id));
-      triggerNotification("Artis berhasil dihapus.");
-    }
   };
 
   // Dynamic Potential Revenue for Add Form
@@ -803,7 +1057,7 @@ export default function Home() {
                   { label: "Total Event", value: totalEventsCount, note: "+4 Bulan ini", icon: CalendarDays, color: "text-[#ff3b70] bg-[#ff3b70]/10" },
                   { label: "Tiket Terjual", value: totalSoldTickets.toLocaleString("id-ID"), note: "+12%", icon: Ticket, color: "text-purple-400 bg-purple-500/10" },
                   { label: "Pendapatan", value: formatIDR(totalRevenue), note: "Gross Volume (YTD)", icon: Wallet, color: "text-teal-400 bg-teal-500/10" },
-                  { label: "Pending Approval", value: "12", note: "Butuh Review", icon: Info, color: "text-amber-400 bg-amber-500/10" }
+                  { label: "Pending Approval", value: stats ? stats.pendingPayments : "12", note: "Butuh Review", icon: Info, color: "text-amber-400 bg-amber-500/10" }
                 ].map((stat, idx) => {
                   const StatIcon = stat.icon;
                   return (
@@ -883,11 +1137,27 @@ export default function Home() {
                   <h3 className="text-base font-semibold text-white tracking-wide mb-6">Aktivitas Terakhir</h3>
                   
                   <div className="flex flex-col gap-5">
-                    {[
+                    {(activity.length === 0 ? [
                       { user: "Budi Santoso", action: "membeli 2 tiket", item: "Rock Anthem", time: "2 menit lalu", color: "bg-[#ff3b70]/15 text-[#ff3b70]" },
                       { user: "Pendaftaran artis baru", action: ":", item: "The Midnight Sun", time: "15 menit lalu", color: "bg-purple-500/15 text-purple-400" },
                       { user: "Event Art Tech Expo", action: "telah disetujui", item: "", time: "1 jam lalu", color: "bg-teal-500/15 text-teal-400" }
-                    ].map((act, idx) => (
+                    ] : activity.map((log) => {
+                      const actionMap = {
+                        PURCHASE: { action: "membeli tiket", item: log.details, color: "bg-[#ff3b70]/15 text-[#ff3b70]" },
+                        ARTIST_REGISTER: { action: "mendaftarkan artis", item: log.details, color: "bg-purple-500/15 text-purple-400" },
+                        EVENT_APPROVED: { action: "menyetujui event", item: log.details, color: "bg-teal-500/15 text-teal-400" },
+                        PAYMENT_VERIFIED: { action: "memverifikasi pembayaran", item: log.details, color: "bg-amber-500/15 text-amber-400" }
+                      };
+                      const act = actionMap[log.action_type] || { action: log.action_type, item: log.details, color: "bg-zinc-500/15 text-zinc-400" };
+                      let time = "";
+                      try {
+                        const then = new Date(log.created_at);
+                        if (!isNaN(then.getTime())) {
+                          time = then.toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+                        }
+                      } catch (err) { time = ""; }
+                      return { user: log.user || "System", ...act, time, color: act.color };
+                    })).map((act, idx) => (
                       <div key={idx} className="flex items-start gap-4">
                         <div className={`w-8.5 h-8.5 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${act.color}`}>
                           {act.user.substring(0, 1).toUpperCase()}
@@ -932,7 +1202,7 @@ export default function Home() {
                       </div>
 
                       <button
-                        onClick={() => setEventSubView("add")}
+                        onClick={() => { setEventSubView("add"); setEditingEventId(null); }}
                         className="py-3 px-4.5 bg-[#fecdd3] hover:bg-[#fda4af] text-[#4c0519] rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-[#ff3b70]/10 hover:scale-[1.01]"
                       >
                         <Plus className="w-4.5 h-4.5 stroke-[3]" />
@@ -1037,7 +1307,23 @@ export default function Home() {
                                   <td className="py-5 px-6 text-right">
                                     <div className="flex items-center justify-end gap-2.5">
                                       <button 
-                                        onClick={() => triggerNotification(`Edit event "${ev.name}" is under development.`)}
+                                        onClick={() => {
+                                          setEventForm({
+                                            name: ev.name,
+                                            artist: ev.artist,
+                                            category: ev.category,
+                                            date: ev.date ? String(ev.date).substring(0, 10) : "",
+                                            time: ev.time || "19:00",
+                                            ticketPrice: Number(ev.ticketPrice) || 0,
+                                            quota: Number(ev.quota) || 5000,
+                                            location: ev.location || "",
+                                            description: ev.description || "",
+                                            poster: null,
+                                            banner: null
+                                          });
+                                          setEditingEventId(ev.id);
+                                          setEventSubView("add");
+                                        }}
                                         className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 text-[#8b8b9a] hover:text-white hover:border-[#ff3b70]/20 transition-all cursor-pointer"
                                         title="Edit Event"
                                       >
@@ -1119,15 +1405,17 @@ export default function Home() {
                 <div className="flex flex-col gap-8">
                   <div className="flex justify-between items-center">
                     <div>
-                      <h1 className="text-3xl font-extrabold tracking-tight text-white">Add New Event</h1>
+                      <h1 className="text-3xl font-extrabold tracking-tight text-white">
+                        {editingEventId ? "Edit Event" : "Add New Event"}
+                      </h1>
                       <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
-                        Launch your next massive music experience.
+                        {editingEventId ? "Perbarui detail event yang sedang berjalan." : "Launch your next massive music experience."}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => setEventSubView("list")}
+                        onClick={() => { setEventSubView("list"); setEditingEventId(null); }}
                         className="py-3 px-6 bg-transparent border border-[#26262f] hover:border-white/20 text-[#f4f4f5] rounded-xl text-xs font-bold transition-all cursor-pointer"
                       >
                         Batal
@@ -1136,7 +1424,7 @@ export default function Home() {
                         onClick={handleSaveEvent}
                         className="py-3 px-6 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
                       >
-                        Simpan Event
+                        {editingEventId ? "Simpan Perubahan" : "Simpan Event"}
                       </button>
                     </div>
                   </div>
@@ -1263,6 +1551,23 @@ export default function Home() {
                             >
                               <FolderKanban className="w-4 h-4" />
                             </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Status Event</label>
+                          <div className="relative">
+                            <select
+                              className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold appearance-none cursor-pointer"
+                              value={eventForm.status || "ACTIVE"}
+                              onChange={(e) => setEventForm({ ...eventForm, status: e.target.value })}
+                            >
+                              <option value="ACTIVE">ACTIVE</option>
+                              <option value="SOLD OUT">SOLD OUT</option>
+                              <option value="CLOSED">CLOSED</option>
+                              <option value="DRAFT">DRAFT</option>
+                            </select>
+                            <ChevronRight className="w-4 h-4 text-[#8b8b9a] absolute right-3.5 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" />
                           </div>
                         </div>
 
@@ -1828,7 +2133,9 @@ export default function Home() {
                     </div>
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-2xl font-extrabold text-white font-mono leading-none">1.240</span>
+                    <span className="text-2xl font-extrabold text-white font-mono leading-none">
+                      {(stats ? stats.totalPayments : 1240).toLocaleString("id-ID")}
+                    </span>
                     <span className="text-[9px] text-[#8b8b9a] mt-2 font-medium">Akun terdaftar melakukan checkout</span>
                   </div>
                 </div>
@@ -1868,12 +2175,13 @@ export default function Home() {
                         <th className="py-4 px-6">Event Name</th>
                         <th className="py-4 px-6">Total Bayar</th>
                         <th className="py-4 px-6 text-center">Status</th>
+                        <th className="py-4 px-6 text-center">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#26262f]/50">
                       {filteredPayments.length === 0 ? (
                         <tr>
-                          <td colSpan="5" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
+                          <td colSpan="6" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
                             Tidak ada transaksi pembayaran dalam daftar.
                           </td>
                         </tr>
@@ -1919,6 +2227,30 @@ export default function Home() {
                                   {pay.status}
                                 </span>
                               </td>
+
+                              {/* Aksi */}
+                              <td className="py-5 px-6 text-center">
+                                {pay.status === "PENDING" ? (
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => handleVerifyPayment(pay.orderId, "PAID")}
+                                      className="py-1.5 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[9px] font-bold hover:bg-emerald-500/20 transition-all cursor-pointer flex items-center gap-1"
+                                      title="Tandai sudah dibayar"
+                                    >
+                                      <Check className="w-3 h-3" /> Verify
+                                    </button>
+                                    <button
+                                      onClick={() => handleVerifyPayment(pay.orderId, "REJECTED")}
+                                      className="py-1.5 px-3 rounded-lg bg-[#ff3b70]/10 border border-[#ff3b70]/30 text-[#ff3b70] text-[9px] font-bold hover:bg-[#ff3b70]/20 transition-all cursor-pointer flex items-center gap-1"
+                                      title="Tolak pembayaran"
+                                    >
+                                      <X className="w-3 h-3" /> Tolak
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-[#8b8b9a] font-semibold">-</span>
+                                )}
+                              </td>
                             </tr>
                           );
                         })
@@ -1929,19 +2261,13 @@ export default function Home() {
 
                 {/* Pagination */}
                 <div className="p-5 border-t border-[#26262f]/60 flex items-center justify-between text-xs font-semibold text-[#8b8b9a]">
-                  <span>Showing 1-4 of 12 entries</span>
+                  <span>Showing 1-{filteredPayments.length} of {filteredPayments.length} entries</span>
                   <div className="flex items-center gap-1.5">
                     <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
                       <ChevronLeft className="w-3.5 h-3.5" />
                     </button>
                     <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white font-bold">
                       1
-                    </button>
-                    <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all">
-                      2
-                    </button>
-                    <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all">
-                      3
                     </button>
                     <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
                       <ChevronRight className="w-3.5 h-3.5" />

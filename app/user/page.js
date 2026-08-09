@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
   Compass,
@@ -38,7 +38,71 @@ import {
   Users
 } from "lucide-react";
 
+const USER_DEFAULT_IMAGE =
+  "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80";
+
+const MEET_GREET_ADDON_PRICE = 500000;
+
+const mapTicketRow = (row) => {
+  if (!row) return null;
+  const eventDate = row.event_date || "";
+  let date = "TBA";
+  let past = false;
+  try {
+    const d = new Date(eventDate);
+    past = !isNaN(d.getTime()) && d < new Date();
+    if (!isNaN(d.getTime())) {
+      date = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase();
+    }
+  } catch (e) {}
+  return {
+    id: row.code || row.orderId || "T-1",
+    event: row.event_name || "Event",
+    tier: `${row.category || "General"} x${Number(row.ticket_qty) || 1}`,
+    date,
+    venue: row.location || "",
+    code: row.code || "EP-000000",
+    image: row.poster || USER_DEFAULT_IMAGE,
+    status: past ? "Past" : "Active"
+  };
+};
+
+const mapPaymentRow = (row) => {
+  if (!row) return null;
+  let date = new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+  try {
+    const d = new Date(row.createdAt || row.verifiedAt || Date.now());
+    if (!isNaN(d.getTime())) {
+      date = d.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    }
+  } catch (e) {}
+  const status = String(row.status || "PENDING").toLowerCase();
+  return {
+    id: row.orderId || row.id || "P-1",
+    eventName: row.event_name || row.eventName || "Event",
+    date,
+    amount: "Rp " + Number(row.totalBayar || 0).toLocaleString("id-ID"),
+    status: status === "paid" ? "Success" : status === "rejected" || status === "void" ? "Void" : "Pending"
+  };
+};
+
 export default function UserConsole() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#09090b] text-white">
+          <div className="text-center">
+            <p className="text-lg font-semibold">Memeriksa sesi login...</p>
+          </div>
+        </div>
+      }
+    >
+      <UserConsoleContent />
+    </Suspense>
+  );
+}
+
+function UserConsoleContent() {
   const router = useRouter();
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
   const [user, setUser] = useState(null);
@@ -48,7 +112,7 @@ export default function UserConsole() {
   const [activeTab, setActiveTab] = useState("discover"); // default to discover to match screen
   const [theme, setTheme] = useState("light"); // default to light to match new screenshots
   const [notification, setNotification] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("Synthwave");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isPaying, setIsPaying] = useState(false);
 
   // Discover Filters
@@ -56,6 +120,7 @@ export default function UserConsole() {
   const [filterFestival, setFilterConcertFestival] = useState(true);
   const [filterClubNight, setFilterClubNight] = useState(false);
   const [priceRange, setPriceRange] = useState(1500000);
+  const [sortBy, setSortBy] = useState("relevance");
 
   // Tickets Toggles
   const [ticketFilter, setTicketFilter] = useState("upcoming"); // upcoming, past
@@ -65,6 +130,9 @@ export default function UserConsole() {
   const [username, setUsername] = useState("alex_v");
   const [emailAddress, setEmailAddress] = useState("alex.vance@example.com");
   const [phoneNumber, setPhoneNumber] = useState("+1 (555) 019-2831");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [selectedGenres, setSelectedGenres] = useState(["Techno", "Synthwave", "Rock"]);
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [pushNotifications, setPushNotifications] = useState(false);
@@ -72,8 +140,14 @@ export default function UserConsole() {
   // Checkout states
   const [selectedTicketTier, setSelectedTicketTier] = useState("VIP Access");
   const [ticketQuantity, setTicketQuantity] = useState(2);
-  const [meetGreetAddon, setMeetGreetAddon] = useState(true);
+  const [meetGreetAddon, setMeetGreetAddon] = useState(false);
   const [timeLeft, setTimeLeft] = useState(284);
+  const [paymentMethod, setPaymentMethod] = useState("ewallet");
+
+  // Live data
+  const [eventsList, setEventsList] = useState([]);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const searchParams = useSearchParams();
 
   // Custom DB states for live additions
   const [userTickets, setUserTickets] = useState([
@@ -108,6 +182,8 @@ export default function UserConsole() {
   // Modals
   const [activeAccessTicket, setActiveAccessTicket] = useState(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [showQrisModal, setShowQrisModal] = useState(false);
+  const [currentOrderId, setCurrentOrderId] = useState(null);
   const [latestOrderInfo, setLatestOrderInfo] = useState(null);
 
   // Initialize
@@ -129,11 +205,63 @@ export default function UserConsole() {
       } catch (err) {
         console.error(err);
         router.replace("/");
+        return;
       } finally {
         setIsAuthChecked(true);
       }
+
+      const headers = { Authorization: `Bearer ${token}` };
+
+      fetch(`${API_BASE}/api/events`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setEventsList(data.filter((e) => e.status !== "DRAFT"));
+          }
+        })
+        .catch((err) => console.error(err));
+
+      fetch(`${API_BASE}/api/me/tickets`, { headers })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((rows) => {
+          if (Array.isArray(rows)) {
+            setUserTickets(
+              rows.map(mapTicketRow).filter(Boolean)
+            );
+          }
+        })
+        .catch((err) => console.error(err));
+
+      fetch(`${API_BASE}/api/me/payments`, { headers })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((rows) => {
+          if (Array.isArray(rows)) {
+            setPaymentHistory(
+              rows.map(mapPaymentRow).filter(Boolean)
+            );
+          }
+        })
+        .catch((err) => console.error(err));
+
+      const checkoutId = searchParams.get("checkout");
+      if (checkoutId) {
+        const qtyParam = searchParams.get("qty");
+        if (qtyParam) setTicketQuantity(Math.min(Math.max(parseInt(qtyParam, 10) || 1, 1), 10));
+        fetch(`${API_BASE}/api/events/${checkoutId}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((ev) => {
+            if (ev) {
+              setSelectedEvent(ev);
+              setActiveTab("checkout_details_view");
+            } else {
+              setActiveTab("discover");
+            }
+          })
+          .catch(() => setActiveTab("discover"));
+      }
     }, 0);
     return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // Timer countdown
@@ -151,6 +279,9 @@ export default function UserConsole() {
 
   // Pricing calculations (IDR)
   const getTicketPrice = () => {
+    if (selectedEvent && Number(selectedEvent.ticketPrice)) {
+      return Number(selectedEvent.ticketPrice);
+    }
     switch (selectedTicketTier) {
       case "VIP Access": return 1500000;
       case "Festival Ground": return 850000;
@@ -161,9 +292,16 @@ export default function UserConsole() {
 
   const formatIDR = (num) => "Rp " + Number(num).toLocaleString("id-ID");
 
+  const formatTime = (seconds) => {
+    const s = Math.max(0, Number(seconds) || 0);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  };
+
   const ticketPrice = getTicketPrice();
-  const addonPrice = meetGreetAddon ? 500000 : 0;
-  const subtotal = (ticketPrice * ticketQuantity) + addonPrice;
+  const addonPrice = !selectedEvent && meetGreetAddon ? MEET_GREET_ADDON_PRICE : 0;
+  const subtotal = ticketPrice * ticketQuantity + addonPrice;
   const taxes = Math.round(subtotal * 0.1 * 100) / 100;
   const total = subtotal + taxes;
 
@@ -204,7 +342,8 @@ export default function UserConsole() {
         body: JSON.stringify({
           user: fullName || "Guest",
           email: emailAddress || "guest@example.com",
-          event: "Neon Night Tour 2024",
+          event: selectedEvent ? selectedEvent.name : "Neon Night Tour 2024",
+          eventId: selectedEvent ? selectedEvent.id : null,
           ticketQty: ticketQuantity,
           totalBayar: Math.round(total)
         })
@@ -213,6 +352,13 @@ export default function UserConsole() {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Gagal membuat transaksi pembayaran.");
+      }
+
+      if (paymentMethod === "ewallet") {
+        setIsPaying(false);
+        setCurrentOrderId(data.payment?.orderId || `EP-${Date.now()}`);
+        setShowQrisModal(true);
+        return;
       }
 
       await loadSnapScript();
@@ -227,20 +373,21 @@ export default function UserConsole() {
             const statusData = await statusRes.json();
             if (statusData.status === "PAID") {
               clearInterval(pollInterval);
+              const ev = selectedEvent;
               const newTicket = {
                 id: `T${userTickets.length + 1}`,
-                event: "Neon Night Tour 2024",
-                tier: selectedTicketTier,
-                date: "DEC 15",
-                venue: "The Zenith Arena, London",
+                event: ev ? ev.name : "Neon Night Tour 2024",
+                tier: `${ev ? ev.category || "General" : "General"} x${ticketQuantity}`,
+                date: ev ? new Date(ev.date).toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase() : "DEC 15",
+                venue: ev ? ev.location : "The Zenith Arena, London",
                 code: data.payment.orderId,
-                image: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
+                image: (ev && (ev.poster || ev.banner)) || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
                 status: "Active"
               };
               setUserTickets([newTicket, ...userTickets]);
               setLatestOrderInfo({
                 orderId: data.payment.orderId,
-                items: `${ticketQuantity}x ${selectedTicketTier === "VIP Access" ? "VIP Standing" : "General Standing"}`,
+                items: `${ticketQuantity}x ${selectedEvent ? selectedEvent.name : "General"}`,
                 total: formatIDR(total)
               });
               setShowSuccessModal(true);
@@ -286,6 +433,55 @@ export default function UserConsole() {
     router.replace("/");
   };
 
+  const saveProfile = async (e) => {
+    e.preventDefault();
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: fullName, phone: phoneNumber })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menyimpan profil.");
+      try {
+        const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
+        localStorage.setItem("user", JSON.stringify({ ...storedUser, ...(data.user || { name: fullName, phone: phoneNumber }) }));
+      } catch (err) {}
+      triggerNotification("Data profil berhasil diperbarui!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menyimpan profil.");
+    }
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      triggerNotification("Konfirmasi password baru tidak cocok.");
+      return;
+    }
+    if (String(newPassword).length < 6) {
+      triggerNotification("Password baru minimal 6 karakter.");
+      return;
+    }
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/profile/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengubah password.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      triggerNotification("Password berhasil diperbarui!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal mengubah password.");
+    }
+  };
+
   const toggleGenre = (genre) => {
     if (selectedGenres.includes(genre)) {
       setSelectedGenres(selectedGenres.filter((g) => g !== genre));
@@ -293,6 +489,36 @@ export default function UserConsole() {
       setSelectedGenres([...selectedGenres, genre]);
     }
   };
+
+  // Live data: filtered event list for Discover tab
+  const visibleEvents = (eventsList || [])
+    .filter((ev) => ev.status !== "DRAFT")
+    .filter((ev) => {
+      const q = searchQuery.trim().toLowerCase();
+      const haystack = `${ev.name || ""} ${ev.artist || ""} ${ev.category || ""}`.toLowerCase();
+      if (q && !haystack.includes(q)) return false;
+
+      const cat = (ev.category || "").toLowerCase();
+      const inConcert = ["pop", "rock", "indie"].some((c) => cat.includes(c));
+      const inFestival = cat.includes("festival");
+      const inClub = ["jazz", "electronic"].some((c) => cat.includes(c));
+      const allowed =
+        (filterConcert && inConcert) ||
+        (filterFestival && inFestival) ||
+        (filterClubNight && inClub);
+      if (!allowed) return false;
+
+      if (Number(ev.ticketPrice) > priceRange) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === "price_asc") return (Number(a.ticketPrice) || 0) - (Number(b.ticketPrice) || 0);
+      if (sortBy === "price_desc") return (Number(b.ticketPrice) || 0) - (Number(a.ticketPrice) || 0);
+      if (sortBy === "date") return new Date(a.date || 0) - new Date(b.date || 0);
+      return 0;
+    });
+
+  const eventBanner = (ev) => ev && (ev.poster || ev.banner || USER_DEFAULT_IMAGE);
 
   if (!isAuthChecked) {
     return (
@@ -518,33 +744,32 @@ export default function UserConsole() {
                   </div>
 
                   <div className="flex flex-col gap-4">
-                    {[
-                      { title: "Neon Nights", info: "Dec 15 · Subterranean Complex", price: "Dari Rp 450.000", image: "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=400&q=80" },
-                      { title: "Headline Blueprint", info: "Dec 18 · Subterranean Complex", price: "Dari Rp 450.000", image: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=400&q=80" }
-                    ].map((item, idx) => (
+                    {(eventsList || []).filter((ev) => ev.status !== "DRAFT").slice(0, 2).map((item) => (
                       <div
-                        key={idx}
+                        key={item.id}
                         className="bg-[#141419] border border-[#26262f] rounded-2xl overflow-hidden flex gap-4 p-4 hover:border-[#ff3b70]/20 transition-all duration-300 group"
                       >
                         <div
                           className="w-20 h-20 rounded-xl bg-cover bg-center shrink-0 border border-[#26262f]/60"
-                          style={{ backgroundImage: `url('${item.image}')` }}
+                          style={{ backgroundImage: `url('${eventBanner(item)}')` }}
                         />
                         <div className="flex-1 flex flex-col justify-between min-w-0">
                           <div>
-                            <span className="text-[9px] uppercase tracking-widest text-[#ff3b70] font-bold">Pop Live</span>
-                            <h4 className="text-sm font-bold text-white mt-0.5 truncate leading-tight group-hover:text-[#ff3b70] transition-colors">{item.title}</h4>
+                            <span className="text-[9px] uppercase tracking-widest text-[#ff3b70] font-bold">{item.category || "Live"}</span>
+                            <h4 className="text-sm font-bold text-white mt-0.5 truncate leading-tight group-hover:text-[#ff3b70] transition-colors">{item.name}</h4>
                             <p className="text-[11px] text-[#8b8b9a] font-mono mt-1 flex items-center gap-1.5">
                               <CalendarDays className="w-3.5 h-3.5 text-[#ff3b70]/60" />
-                              {item.info}
+                              {item.date ? new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "TBA"} · {item.location || "TBA"}
                             </p>
                           </div>
                           <div className="flex items-center justify-between border-t border-[#26262f]/30 pt-2 mt-2">
-                            <span className="text-xs font-mono font-bold text-white">{item.price}</span>
+                            <span className="text-xs font-mono font-bold text-white">Dari {formatIDR(Number(item.ticketPrice) || 0)}</span>
                             <button
                               onClick={() => {
-                                setSelectedTicketTier("VIP Access");
-                                setActiveTab("discover");
+                                setSelectedEvent(item);
+                                setSelectedTicketTier(item.category || "General");
+                                setTicketQuantity(1);
+                                setActiveTab("checkout_details_view");
                               }}
                               className="text-xs font-bold text-[#ff3b70] hover:text-[#ff5c8a] flex items-center gap-1 transition-all cursor-pointer"
                             >
@@ -698,58 +923,50 @@ export default function UserConsole() {
                   <div className="flex items-center justify-between border-b border-[#26262f]/10 pb-3 flex-wrap gap-3">
                     <div>
                       <h2 className={`text-xl font-extrabold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Search Results</h2>
-                      <span className="text-[10px] text-[#8b8b9a] font-mono">Found 24 events matching &quot;{searchQuery}&quot;</span>
+                      <span className="text-[10px] text-[#8b8b9a] font-mono">
+                        Found {visibleEvents.length} event{visibleEvents.length === 1 ? "" : "s"} {searchQuery ? `matching "${searchQuery}"` : "available"}
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-[#8b8b9a] font-bold uppercase tracking-wider">Sort by</span>
                       <div className="relative">
-                        <select className={`text-xs py-2 px-4 rounded-xl border outline-none font-semibold cursor-pointer appearance-none pr-8 ${
-                          theme === "dark" ? "bg-[#141419] border-[#26262f] text-white" : "bg-white border-[#e5e7eb] text-[#18181f]"
-                        }`}>
-                          <option>Relevance</option>
-                          <option>Price: Low to High</option>
-                          <option>Price: High to Low</option>
-                          <option>Date: Soonest</option>
+                        <select
+                          value={sortBy}
+                          onChange={(e) => setSortBy(e.target.value)}
+                          className={`text-xs py-2 px-4 rounded-xl border outline-none font-semibold cursor-pointer appearance-none pr-8 ${
+                            theme === "dark" ? "bg-[#141419] border-[#26262f] text-white" : "bg-white border-[#e5e7eb] text-[#18181f]"
+                          }`}
+                        >
+                          <option value="relevance">Relevance</option>
+                          <option value="price_asc">Price: Low to High</option>
+                          <option value="price_desc">Price: High to Low</option>
+                          <option value="date">Date: Soonest</option>
                         </select>
                         <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                     </div>
                   </div>
 
-                  {/* Grid of 3 Event Cards (Screenshot 2) */}
+                  {/* Grid of Event Cards (live data) */}
+                  {visibleEvents.length === 0 ? (
+                    <div className={`border rounded-2xl p-10 text-center space-y-2 ${
+                      theme === "dark" ? "bg-[#141419] border-[#26262f]" : "bg-white border-[#e5e7eb]"
+                    }`}>
+                      <Compass className="w-8 h-8 mx-auto text-[#8b8b9a]" />
+                      <p className={`text-sm font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Tidak ada event yang cocok</p>
+                      <p className="text-[11px] text-[#8b8b9a] font-semibold">Coba ubah kata kunci pencarian atau filter kategori.</p>
+                    </div>
+                  ) : (
                   <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                    {[
-                      {
-                        title: "Neon Nights 2024",
-                        tag: "Festival",
-                        tagColor: "bg-[#ff3b70]/10 border-[#ff3b70]/20 text-[#ff3b70]",
-                        date: "Oct 12 - 14, 2024",
-                        venue: "Cyber Dome, New...",
-                        price: "Mulai dari Rp 850.000",
-                        img: "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=400&q=80"
-                      },
-                      {
-                        title: "Midnight Cruiser",
-                        tag: "Club Night",
-                        tagColor: "bg-cyan-500/10 border-cyan-400/20 text-cyan-400",
-                        date: "Nov 03, 2024",
-                        venue: "The Void, Los Angeles",
-                        price: "Mulai dari Rp 350.000",
-                        img: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=400&q=80"
-                      },
-                      {
-                        title: "Synth & Soul",
-                        tag: "Concert",
-                        tagColor: "bg-[#8b5cf6]/10 border-[#8b5cf6]/20 text-[#8b5cf6]",
-                        date: "Dec 01, 2024",
-                        venue: "Starlight Arena, Berlin",
-                        price: "Mulai dari Rp 600.000",
-                        img: "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=400&q=80"
-                      }
-                    ].map((item, idx) => (
+                    {visibleEvents.map((item) => {
+                      const evDate = item.date
+                        ? new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        : "TBA";
+                      const soldOut = item.status === "SOLD OUT" || item.status === "CLOSED" || Number(item.sold) >= Number(item.quota);
+                      return (
                       <div
-                        key={idx}
+                        key={item.id}
                         className={`border rounded-2xl overflow-hidden flex flex-col justify-between hover:border-[#ff3b70]/40 transition-all duration-300 group shadow-sm ${
                           theme === "dark" ? "bg-[#141419] border-[#26262f]" : "bg-white border-[#e5e7eb]"
                         }`}
@@ -757,10 +974,10 @@ export default function UserConsole() {
                         {/* Image banner */}
                         <div
                           className="h-36 bg-cover bg-center shrink-0 relative"
-                          style={{ backgroundImage: `url('${item.img}')` }}
+                          style={{ backgroundImage: `url('${eventBanner(item)}')` }}
                         >
-                          <span className={`absolute bottom-3 left-3 px-2.5 py-0.5 rounded-full text-[8px] font-extrabold border tracking-wider font-mono ${item.tagColor}`}>
-                            {item.tag}
+                          <span className="absolute bottom-3 left-3 px-2.5 py-0.5 rounded-full text-[8px] font-extrabold border tracking-wider font-mono bg-[#ff3b70]/10 border-[#ff3b70]/20 text-[#ff3b70]">
+                            {item.category || "Event"}
                           </span>
                         </div>
 
@@ -769,16 +986,16 @@ export default function UserConsole() {
                           <div className="space-y-1">
                             <h3 className={`text-sm font-extrabold leading-snug group-hover:text-[#ff3b70] transition-colors truncate ${
                               theme === "dark" ? "text-white" : "text-[#18181f]"
-                            }`}>{item.title}</h3>
-                            
+                            }`}>{item.name}</h3>
+
                             <div className="space-y-0.5 text-[10px] text-[#8b8b9a] font-semibold font-mono">
                               <p className="flex items-center gap-1.5">
                                 <CalendarDays className="w-3.5 h-3.5 text-[#ff3b70]/70" />
-                                {item.date}
+                                {evDate}
                               </p>
                               <p className="flex items-center gap-1.5">
                                 <MapPin className="w-3.5 h-3.5 text-[#ff3b70]/70" />
-                                {item.venue}
+                                {item.location || "Lokasi akan diumumkan"}
                               </p>
                             </div>
                           </div>
@@ -787,25 +1004,31 @@ export default function UserConsole() {
                             <div className="flex flex-col">
                               <span className="text-[8px] uppercase text-[#8b8b9a] font-extrabold tracking-wider leading-none">Starting from</span>
                               <span className={`text-xs font-mono font-extrabold leading-none mt-1 ${theme === "dark" ? "text-white" : "text-[#ff3b70]"}`}>
-                                {item.price.replace("Starting from ", "")}
+                                {formatIDR(Number(item.ticketPrice) || 0)}
                               </span>
                             </div>
 
                             <button
                               onClick={() => {
-                                setSelectedTicketTier(item.title.includes("Nights") ? "VIP Access" : "Festival Ground");
-                                // Open detailed view / select tickets state
+                                setSelectedEvent(item);
+                                setSelectedTicketTier(item.category || "General");
+                                setTicketQuantity(1);
                                 setActiveTab("checkout_details_view");
                               }}
-                              className="py-2 px-3 rounded-lg bg-[#ff3b70] hover:bg-[#ff5c8a] text-white text-[10px] font-extrabold transition-all cursor-pointer shadow-md"
+                              disabled={soldOut}
+                              className={`py-2 px-3 rounded-lg text-white text-[10px] font-extrabold transition-all cursor-pointer shadow-md ${
+                                soldOut ? "bg-[#3e3e4f] cursor-not-allowed opacity-60" : "bg-[#ff3b70] hover:bg-[#ff5c8a]"
+                              }`}
                             >
-                              Get Tickets
+                              {soldOut ? "Habis" : "Get Tickets"}
                             </button>
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  )}
                 </div>
 
               </div>
@@ -815,30 +1038,47 @@ export default function UserConsole() {
           {/* ==================== EVENT DETAILED VIEW (FROM TAB SWITCH) ==================== */}
           {activeTab === "checkout_details_view" && (
             <div className="max-w-5xl mx-auto p-4 md:p-8 flex flex-col gap-8 animate-fade-in">
+              {!selectedEvent ? (
+                <div className={`border rounded-2xl p-12 text-center space-y-4 ${
+                  theme === "dark" ? "bg-[#141419] border-[#26262f]" : "bg-white border-[#e5e7eb]"
+                }`}>
+                  <Compass className="w-10 h-10 mx-auto text-[#8b8b9a]" />
+                  <p className={`text-sm font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>
+                    Pilih event dulu untuk mulai memesan tiket.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab("discover")}
+                    className="py-3 px-6 text-xs font-extrabold text-white gradient-btn rounded-xl shadow-md cursor-pointer"
+                  >
+                    Jelajahi Events
+                  </button>
+                </div>
+              ) : (
+              <>
               <div className="relative overflow-hidden rounded-3xl border border-[#26262f] bg-[#0c0c12]/90 shadow-2xl h-80 flex flex-col justify-end p-6 md:p-8">
                 <div
                   className="absolute inset-0 bg-cover bg-center bg-no-repeat"
                   style={{
-                    backgroundImage: `linear-gradient(to top, rgba(9,9,11,0.95) 15%, rgba(9,9,11,0.6) 50%, rgba(9,9,11,0.3) 100%), url('https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=1200&q=80')`
+                    backgroundImage: `linear-gradient(to top, rgba(9,9,11,0.95) 15%, rgba(9,9,11,0.6) 50%, rgba(9,9,11,0.3) 100%), url('${eventBanner(selectedEvent)}')`
                   }}
                 />
                 <div className="relative z-10 space-y-3.5 max-w-2xl text-white">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[9px] font-extrabold tracking-wider border bg-white/5 border-cyan-400/40 text-cyan-300">
                     <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                    <span>SOLD OUT SOON</span>
+                    <span>{selectedEvent.category || "EVENT"}</span>
                   </div>
-                  <h1 className="text-3xl md:text-4xl font-extrabold font-mono leading-none">light Tour 2024</h1>
+                  <h1 className="text-3xl md:text-4xl font-extrabold font-mono leading-none">{selectedEvent.name}</h1>
                   <p className="text-xs md:text-sm text-[#c7c7d4] font-medium leading-relaxed">
-                    Ultimate sensory overload with synthwave and electro-house gig for one unforgettable night.
+                    {selectedEvent.description || "Saksikan penampilan spesial dalam event konser yang tak terlupakan."}
                   </p>
                   <div className="flex flex-wrap gap-4 pt-2 border-t border-[#26262f]/40">
                     <div className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                       <Clock className="w-4 h-4 text-[#ff3b70]" />
-                      <span>20:00 - 04:00 GMT</span>
+                      <span>{selectedEvent.date ? new Date(selectedEvent.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "TBA"} {selectedEvent.time || ""}</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                       <MapPin className="w-4 h-4 text-[#ff3b70]" />
-                      <span>The Zenith Arena, London</span>
+                      <span>{selectedEvent.location || "Lokasi akan diumumkan"}</span>
                     </div>
                   </div>
                 </div>
@@ -850,11 +1090,13 @@ export default function UserConsole() {
                 }`}>
                   <h3 className={`text-base font-bold tracking-wide ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Event Detail</h3>
                   <p className="text-xs leading-relaxed">
-                    Get ready to be transported into a sonic dimension where light and sound collide. The Neon Night Tour is not just a concert; it&apos;s an immersive audio-visual ecosystem designed to push the boundaries of live entertainment.
+                    {selectedEvent.description || "Detail lengkap event akan segera diumumkan. Pantau terus untuk informasi terbaru."}
                   </p>
-                  <p className="text-xs leading-relaxed">
-                    Featuring state-of-the-art holographic projections, a massive 360-degree LED canvas, and a custom spatial sound system, the Zenith Arena will be transformed into a pulsating cyber-punk environment.
-                  </p>
+                  {selectedEvent.artist && (
+                    <p className="text-xs leading-relaxed">
+                      Dibawakan oleh <span className="font-bold">{selectedEvent.artist}</span>. Pastikan tiketmu terkonfirmasi sebelum hari-H.
+                    </p>
+                  )}
                 </div>
 
                 <div className={`lg:col-span-5 border rounded-2xl p-6 space-y-6 ${
@@ -862,31 +1104,29 @@ export default function UserConsole() {
                 }`}>
                   <div>
                     <h3 className={`text-base font-bold tracking-wide ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Select Tickets</h3>
-                    <p className="text-[11px] text-[#8b8b9a] mt-1 font-semibold leading-none">Choose your tier and experience level.</p>
+                    <p className="text-[11px] text-[#8b8b9a] mt-1 font-semibold leading-none">Harga per tiket sudah termasuk pajak.</p>
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    {[
-                      { name: "VIP Access", price: 1500000, info: "Fast track access, exclusive lounge, free merch." },
-                      { name: "Festival Ground", price: 850000, info: "General admission standing area." },
-                      { name: "Tribune Seating", price: 650000, info: "Reserved seat in the grandstand." }
-                    ].map((tier) => (
-                      <button
-                        key={tier.name}
-                        onClick={() => setSelectedTicketTier(tier.name)}
-                        className={`w-full text-left p-4 rounded-xl border transition-all flex flex-col gap-1 cursor-pointer ${
-                          selectedTicketTier === tier.name
-                            ? "bg-[#ff3b70]/5 border-[#ff3b70] shadow-sm"
-                            : "bg-[#18181f]/5 border-[#26262f]/15 hover:border-[#ff3b70]/40"
-                        }`}
-                      >
-                        <div className="flex justify-between items-center w-full">
-                          <span className={`text-xs font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{tier.name}</span>
-                          <span className="text-xs font-mono font-extrabold text-[#ff3b70]">{formatIDR(tier.price)}</span>
-                        </div>
-                        <p className="text-[10px] text-[#8b8b9a] font-medium leading-tight mt-0.5">{tier.info}</p>
-                      </button>
-                    ))}
+                    <div className={`w-full text-left p-4 rounded-xl border transition-all flex flex-col gap-1 bg-[#ff3b70]/5 border-[#ff3b70] shadow-sm`}>
+                      <div className="flex justify-between items-center w-full">
+                        <span className={`text-xs font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>
+                          {selectedEvent.category || "General"} Ticket
+                        </span>
+                        <span className="text-xs font-mono font-extrabold text-[#ff3b70]">{formatIDR(getTicketPrice())}</span>
+                      </div>
+                      <p className="text-[10px] text-[#8b8b9a] font-medium leading-tight mt-0.5">
+                        Tiket masuk {selectedEvent.name}.
+                      </p>
+                      <div className="flex items-center justify-between pt-2 mt-1 border-t border-[#26262f]/10 text-[10px] font-mono">
+                        <span className="text-[#8b8b9a] font-semibold">
+                          Terjual {Number(selectedEvent.sold) || 0} / {Number(selectedEvent.quota) || 0}
+                        </span>
+                        <span className={Number(selectedEvent.sold) >= Number(selectedEvent.quota) ? "text-red-400 font-extrabold" : "text-emerald-500 font-extrabold"}>
+                          {Number(selectedEvent.sold) >= Number(selectedEvent.quota) ? "HABIS" : "TERSEDIA"}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between border-t border-b border-[#26262f]/10 py-4">
@@ -898,30 +1138,37 @@ export default function UserConsole() {
                         <Minus className="w-3.5 h-3.5 stroke-[3]" />
                       </button>
                       <span className={`text-xs font-mono font-extrabold w-6 text-center ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{ticketQuantity}</span>
-                      <button onClick={() => setTicketQuantity(ticketQuantity + 1)} className="text-[#8b8b9a] hover:text-white cursor-pointer">
+                      <button
+                        disabled={ticketQuantity >= (Number(selectedEvent.quota) - Number(selectedEvent.sold))}
+                        onClick={() => setTicketQuantity(ticketQuantity + 1)}
+                        className="text-[#8b8b9a] hover:text-white cursor-pointer disabled:opacity-30"
+                      >
                         <Plus className="w-3.5 h-3.5 stroke-[3]" />
                       </button>
                     </div>
                   </div>
 
-                  <div className="flex items-end justify-between pt-2">
-                    <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-wrap items-end justify-between gap-3 pt-2">
+                    <div className="flex flex-col gap-0.5 min-w-0">
                       <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold">Total price</span>
-                      <span className={`text-lg font-mono font-extrabold leading-none ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(subtotal)}</span>
+                      <span className={`text-lg font-mono font-extrabold leading-none whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(subtotal)}</span>
                     </div>
-                    
+
                     <button
+                      disabled={Number(selectedEvent.sold) >= Number(selectedEvent.quota) || selectedEvent.status === "CLOSED"}
                       onClick={() => {
                         setTimeLeft(284);
                         setActiveTab("checkout");
                       }}
-                      className="py-3 px-6 text-xs font-extrabold text-white gradient-btn rounded-xl shadow-md cursor-pointer"
+                      className="py-3 px-6 text-xs font-extrabold text-white gradient-btn rounded-xl shadow-md cursor-pointer disabled:opacity-40 shrink-0"
                     >
                       Proceed to Pay
                     </button>
                   </div>
                 </div>
               </div>
+              </>
+              )}
             </div>
           )}
 
@@ -1050,48 +1297,48 @@ export default function UserConsole() {
                 </div>
 
                 {/* Summary Panel */}
-                <div className={`border rounded-2xl p-6 h-fit space-y-6 ${
+                <div className={`lg:col-span-5 min-w-0 border rounded-2xl p-6 h-fit space-y-6 ${
                   theme === "dark" ? "bg-[#141419] border-[#26262f] text-white" : "bg-white border-[#e5e7eb] text-[#18181f]"
                 }`}>
                   <h3 className="text-sm font-bold tracking-wide border-b border-[#26262f]/10 pb-3">Order Summary</h3>
 
                   <div className="space-y-4 font-mono text-xs">
-                    <div className="flex justify-between items-start gap-4">
-                      <div>
-                        <span className={`font-sans font-bold block ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{selectedTicketTier} - Day 1</span>
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className={`font-sans font-bold block break-words ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{selectedEvent ? selectedEvent.name : `${selectedTicketTier} - Day 1`}</span>
                         <span className="text-[10px] text-[#8b8b9a] font-semibold">{ticketQuantity}x {formatIDR(ticketPrice)}</span>
                       </div>
-                      <span className={`font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(ticketPrice * ticketQuantity)}</span>
+                      <span className={`font-bold shrink-0 whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(ticketPrice * ticketQuantity)}</span>
                     </div>
 
-                    {meetGreetAddon && (
-                      <div className="flex justify-between items-start gap-4 border-t border-[#26262f]/10 pt-4">
-                        <div>
-                          <span className={`font-sans font-bold block ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Meet & Greet Add-on</span>
-                          <span className="text-[10px] text-[#8b8b9a] font-semibold">1x {formatIDR(500000)}</span>
+                    {!selectedEvent && meetGreetAddon && (
+                      <div className="flex justify-between items-start gap-3 border-t border-[#26262f]/10 pt-4">
+                        <div className="min-w-0">
+                          <span className={`font-sans font-bold block break-words ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Meet & Greet Add-on</span>
+                          <span className="text-[10px] text-[#8b8b9a] font-semibold">1x {formatIDR(MEET_GREET_ADDON_PRICE)}</span>
                         </div>
-                        <span className={`font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(500000)}</span>
+                        <span className={`font-bold shrink-0 whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(MEET_GREET_ADDON_PRICE)}</span>
                       </div>
                     )}
 
                     <div className="h-px bg-[#26262f]/10 my-4" />
 
                     <div className="space-y-2 text-[#8b8b9a] text-[11px] font-semibold">
-                      <div className="flex justify-between">
-                        <span>Subtotal</span>
-                        <span>{formatIDR(subtotal)}</span>
+                      <div className="flex justify-between items-center gap-3">
+                        <span className="min-w-0">Subtotal</span>
+                        <span className="shrink-0 whitespace-nowrap">{formatIDR(subtotal)}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Taxes & Fees (10%)</span>
-                        <span>{formatIDR(taxes)}</span>
+                      <div className="flex justify-between items-center gap-3">
+                        <span className="min-w-0">Taxes & Fees (10%)</span>
+                        <span className="shrink-0 whitespace-nowrap">{formatIDR(taxes)}</span>
                       </div>
                     </div>
 
                     <div className="h-px bg-[#26262f]/10 my-4" />
 
-                    <div className="flex justify-between items-end">
-                      <span className="font-sans text-xs font-bold uppercase tracking-wider text-[#8b8b9a]">Total</span>
-                      <span className={`text-lg font-bold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(total)}</span>
+                    <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+                      <span className="font-sans text-xs font-bold uppercase tracking-wider text-[#8b8b9a] min-w-0">Total</span>
+                      <span className={`text-lg font-bold shrink-0 whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(total)}</span>
                     </div>
                   </div>
 
@@ -1257,7 +1504,7 @@ export default function UserConsole() {
                       </div>
 
                       {/* Inputs Grid */}
-                      <form onSubmit={(e) => { e.preventDefault(); triggerNotification("Data profil berhasil diperbarui!"); }} className="flex-1 w-full grid gap-4">
+                      <form onSubmit={saveProfile} className="flex-1 w-full grid gap-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="flex flex-col gap-1.5">
                             <label className="text-[9px] font-bold text-[#8b8b9a] uppercase tracking-wide">Full Name</label>
@@ -1328,12 +1575,15 @@ export default function UserConsole() {
                       <h3 className="text-xs font-bold uppercase tracking-wider">Keamanan</h3>
                     </div>
 
-                    <form onSubmit={(e) => { e.preventDefault(); triggerNotification("Password berhasil diperbarui!"); }} className="grid gap-4">
+                    <form onSubmit={changePassword} className="grid gap-4">
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[9px] font-bold text-[#8b8b9a] uppercase tracking-wide">Current Password</label>
                         <input
                           type="password"
-                          defaultValue="********"
+                          required
+                          value={currentPassword}
+                          onChange={(e) => setCurrentPassword(e.target.value)}
+                          placeholder="••••••••"
                           className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[#ff3b70]/40 transition-all font-mono ${
                             theme === "dark" ? "bg-[#18181f] border-[#26262f] text-white" : "bg-[#f9fafb] border-[#e5e7eb]"
                           }`}
@@ -1345,6 +1595,9 @@ export default function UserConsole() {
                           <label className="text-[9px] font-bold text-[#8b8b9a] uppercase tracking-wide">New Password</label>
                           <input
                             type="password"
+                            required
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
                             placeholder="••••••••"
                             className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[#ff3b70]/40 transition-all font-mono ${
                               theme === "dark" ? "bg-[#18181f] border-[#26262f] text-white" : "bg-[#f9fafb] border-[#e5e7eb]"
@@ -1355,6 +1608,9 @@ export default function UserConsole() {
                           <label className="text-[9px] font-bold text-[#8b8b9a] uppercase tracking-wide">Confirm New Password</label>
                           <input
                             type="password"
+                            required
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
                             placeholder="••••••••"
                             className={`w-full border rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-[#ff3b70]/40 transition-all font-mono ${
                               theme === "dark" ? "bg-[#18181f] border-[#26262f] text-white" : "bg-[#f9fafb] border-[#e5e7eb]"
@@ -1620,6 +1876,57 @@ export default function UserConsole() {
             <div className="space-y-1">
               <p className="text-xs text-white font-bold leading-relaxed">{activeAccessTicket.venue}</p>
               <p className="text-[10px] text-[#8b8b9a] leading-none">{activeAccessTicket.date}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== QRIS MODAL ==================== */}
+      {showQrisModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowQrisModal(false)} />
+          <div className={`relative w-full max-w-sm rounded-2xl p-6 shadow-2xl border ${theme === "dark" ? "bg-[#18181f] border-[#26262f] text-white" : "bg-white border-[#e5e7eb] text-[#18181f]"}`}>
+            <button
+              onClick={() => setShowQrisModal(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-black/10 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="text-center space-y-4">
+              <h2 className="text-lg font-bold">Pembayaran QRIS</h2>
+              <p className="text-xs text-[#8b8b9a]">Order ID: #{currentOrderId}</p>
+              <div className="bg-white p-4 rounded-xl inline-block mx-auto border border-gray-200">
+                <img src="/qris.jpeg" alt="QRIS" className="w-64 h-auto rounded-lg" />
+              </div>
+              <p className="text-sm font-semibold mt-4">Total: {formatIDR(total)}</p>
+              <p className="text-[10px] text-[#8b8b9a]">Silakan scan QRIS di atas menggunakan aplikasi E-Wallet pilihan Anda (GoPay, OVO, Dana, dll).</p>
+              <button
+                onClick={() => {
+                  setShowQrisModal(false);
+                  const ev = selectedEvent;
+                  const newTicket = {
+                    id: `T${userTickets.length + 1}`,
+                    event: ev ? ev.name : "Neon Night Tour 2024",
+                    tier: `${ev ? ev.category || "General" : "General"} x${ticketQuantity}`,
+                    date: ev ? new Date(ev.date).toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase() : "DEC 15",
+                    venue: ev ? ev.location : "The Zenith Arena, London",
+                    code: currentOrderId,
+                    image: (ev && (ev.poster || ev.banner)) || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
+                    status: "Active"
+                  };
+                  setUserTickets([newTicket, ...userTickets]);
+                  setLatestOrderInfo({
+                    orderId: currentOrderId,
+                    items: `${ticketQuantity}x ${selectedEvent ? selectedEvent.name : "General"}`,
+                    total: formatIDR(total)
+                  });
+                  setShowSuccessModal(true);
+                  setTimeLeft(284);
+                }}
+                className="w-full mt-6 py-3 rounded-xl bg-[#ff3b70] text-white text-xs font-bold hover:bg-[#ff3b70]/90 transition-colors shadow-lg shadow-[#ff3b70]/20"
+              >
+                Konfirmasi Pembayaran
+              </button>
             </div>
           </div>
         </div>

@@ -25,47 +25,28 @@ const features = [
   }
 ];
 
-const events = [
-  {
-    name: "Neon Night Tour 2024",
-    artist: "LUNA & The Stars",
-    date: "15 Nov 2024",
-    venue: "Stadion Utama GBK",
-    category: "Pop Live",
-    status: "ACTIVE",
-    image: "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=800&q=80"
-  },
-  {
-    name: "Thunderous Echoes",
-    artist: "The Iron Strings",
-    date: "22 Nov 2024",
-    venue: "The Warehouse Arena",
-    category: "Rock Night",
-    status: "SOLD OUT",
-    image: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=800&q=80"
-  },
-  {
-    name: "Electric Pulse Fest",
-    artist: "DJ Static & Friends",
-    date: "05 Des 2024",
-    venue: "Beach Club Bali",
-    category: "Festival",
-    status: "ACTIVE",
-    image: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80"
-  },
-  {
-    name: "Midnight Jazz",
-    artist: "Smooth Quartette",
-    date: "30 Okt 2024",
-    venue: "Sky Lounge Plaza",
-    category: "Jazz Session",
-    status: "CLOSED",
-    image: "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=800&q=80"
-  }
-];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+
+const STATUS_STYLE = {
+  ACTIVE: "bg-cyan-500/10 border-cyan-400/30 text-cyan-400",
+  "SOLD OUT": "bg-[#26262f]/50 border-white/10 text-[#8b8b9a]",
+  CLOSED: "bg-red-500/10 border-red-400/30 text-red-400",
+  DRAFT: "bg-[#26262f]/50 border-white/10 text-[#8b8b9a]"
+};
+
+const DEFAULT_IMAGE =
+  "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=800&q=80";
+
+const formatEventDate = (dateStr) => {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+};
 
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [events, setEvents] = useState([]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -73,6 +54,18 @@ export default function Home() {
       if (token) setIsLoggedIn(true);
     }, 0);
     return () => clearTimeout(timeout);
+  }, []);
+
+  // Ambil event publik dari API agar data selalu terbaru
+  useEffect(() => {
+    fetch(`${API_BASE}/api/events`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEvents(data.filter((ev) => ev.status !== "DRAFT").slice(0, 8));
+        }
+      })
+      .catch((err) => console.error("Gagal memuat event:", err));
   }, []);
 
   return (
@@ -160,7 +153,7 @@ export default function Home() {
 
           <div className="pt-4">
             <Link
-              href={isLoggedIn ? "/user" : "/login"}
+              href="/events"
               className="inline-flex items-center gap-2 py-4 px-8 rounded-full text-xs font-extrabold text-white gradient-btn shadow-lg shadow-[#ff3b70]/25 hover:scale-[1.02] transition-all"
             >
               <span>Jelajahi Event</span>
@@ -210,7 +203,7 @@ export default function Home() {
             <p className="text-xs text-[#8b8b9a] font-semibold mt-1">Trending shows you don&apos;t want to miss.</p>
           </div>
           <Link
-            href={isLoggedIn ? "/user" : "/login"}
+            href="/events"
             className="text-xs font-bold text-[#ff3b70] hover:text-[#ff5c8a] hover:underline transition-all flex items-center gap-1.5"
           >
             <span>View All</span>
@@ -218,53 +211,57 @@ export default function Home() {
           </Link>
         </div>
 
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {events.map((item, idx) => (
-            <div
-              key={idx}
-              className="group bg-[#0d0d14]/90 border border-white/5 rounded-3xl overflow-hidden shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-[#ff3b70]/25"
-            >
-              {/* Event Image */}
-              <div
-                className="h-44 bg-cover bg-center shrink-0 relative"
-                style={{ backgroundImage: `url('${item.image}')` }}
+        {events.length === 0 ? (
+          <p className="text-xs text-[#8b8b9a] font-semibold text-center py-10">
+            Belum ada event yang dipublikasikan. Silakan kembali lagi nanti.
+          </p>
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {events.map((item) => (
+              <Link
+                key={item.id}
+                href={`/events/${item.id}`}
+                className="group bg-[#0d0d14]/90 border border-white/5 rounded-3xl overflow-hidden shadow-lg transition-all duration-300 hover:-translate-y-1 hover:border-[#ff3b70]/25 block"
               >
-                {/* Badge Overlay */}
-                <div className="absolute top-4 right-4">
-                  <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-extrabold border tracking-wider ${
-                    item.status === "ACTIVE"
-                      ? "bg-cyan-500/10 border-cyan-400/30 text-cyan-400"
-                      : item.status === "SOLD OUT"
-                      ? "bg-[#26262f]/50 border-white/10 text-[#8b8b9a]"
-                      : "bg-red-500/10 border-red-400/30 text-red-400"
-                  }`}>
-                    {item.status}
-                  </span>
-                </div>
-              </div>
-              
-              {/* Details */}
-              <div className="p-5 space-y-3.5">
-                <div>
-                  <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold font-mono">{item.category}</span>
-                  <h3 className="text-sm font-extrabold text-white mt-0.5 group-hover:text-[#ff3b70] transition-colors leading-tight">{item.name}</h3>
-                  <p className="text-[10px] text-[#50505f] font-bold mt-0.5 font-mono">{item.artist}</p>
+                {/* Event Image */}
+                <div
+                  className="h-44 bg-cover bg-center shrink-0 relative"
+                  style={{ backgroundImage: `url('${item.poster || item.banner || DEFAULT_IMAGE}')` }}
+                >
+                  {/* Badge Overlay */}
+                  <div className="absolute top-4 right-4">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-extrabold border tracking-wider ${STATUS_STYLE[item.status] || STATUS_STYLE.CLOSED}`}>
+                      {item.status}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex flex-col gap-1 border-t border-[#26262f]/45 pt-3 text-[11px] font-medium text-[#8b8b9a] font-mono">
-                  <span className="flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-[#ff3b70]/70" />
-                    {item.date}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-[#ff3b70]/70" />
-                    {item.venue}
-                  </span>
+                {/* Details */}
+                <div className="p-5 space-y-3.5">
+                  <div>
+                    <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold font-mono">{item.category}</span>
+                    <h3 className="text-sm font-extrabold text-white mt-0.5 group-hover:text-[#ff3b70] transition-colors leading-tight">{item.name}</h3>
+                    <p className="text-[10px] text-[#50505f] font-bold mt-0.5 font-mono">{item.artist}</p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 border-t border-[#26262f]/45 pt-3 text-[11px] font-medium text-[#8b8b9a] font-mono">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-[#ff3b70]/70" />
+                      {formatEventDate(item.date)}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-[#ff3b70]/70" />
+                      {item.location}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-[#ff3b70] font-bold pt-0.5">
+                      Rp {Number(item.ticketPrice).toLocaleString("id-ID")}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Footer */}

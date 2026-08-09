@@ -1,6 +1,6 @@
 const mysql = require("mysql2/promise");
 const bcrypt = require("bcryptjs");
-require("dotenv").config();
+require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || "127.0.0.1",
@@ -27,6 +27,121 @@ const execute = async (sql, params = []) => {
 const initSchema = async () => {
   const adminEmail = process.env.ADMIN_EMAIL || "admin@electricpulse.com";
   const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+
+  // 0. Pastikan database ada (dibuat otomatis bila belum ada)
+  try {
+    const conn = await mysql.createConnection({
+      host: process.env.DB_HOST || "127.0.0.1",
+      user: process.env.DB_USER || "root",
+      password: process.env.DB_PASSWORD || "",
+      port: Number(process.env.DB_PORT || 3306)
+    });
+    const dbName = process.env.DB_NAME || "ukkprojek";
+    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci`);
+    await conn.end();
+    console.info(`Database "${dbName}" siap.`);
+  } catch (error) {
+    console.error("Gagal membuat database:", error.message);
+  }
+
+  // 1. Skema tabel (CREATE TABLE IF NOT EXISTS — aman dijalankan setiap server start)
+  await query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(100) UNIQUE NOT NULL,
+      passwordHash VARCHAR(255) NOT NULL,
+      role VARCHAR(20) DEFAULT 'user',
+      phone VARCHAR(30) NULL,
+      avatar_url VARCHAR(255) NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(50) NOT NULL UNIQUE,
+      description TEXT NULL,
+      icon VARCHAR(50) DEFAULT 'music',
+      color VARCHAR(20) DEFAULT 'pink',
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS artists (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      genre VARCHAR(50) DEFAULT 'SYNTHWAVE',
+      instagram VARCHAR(100) NULL,
+      activeEvents INT NOT NULL DEFAULT 0,
+      avatarIndex INT NOT NULL DEFAULT 0,
+      avatar_url VARCHAR(255) NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS events (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(150) NOT NULL,
+      artist VARCHAR(100) NULL,
+      category VARCHAR(50) NULL,
+      date DATE NOT NULL,
+      time TIME NOT NULL,
+      location VARCHAR(255) NOT NULL,
+      ticketPrice DECIMAL(12, 2) NOT NULL DEFAULT 0,
+      quota INT NOT NULL DEFAULT 5000,
+      sold INT NOT NULL DEFAULT 0,
+      status ENUM('ACTIVE', 'SOLD OUT', 'CLOSED', 'DRAFT') DEFAULT 'ACTIVE',
+      poster VARCHAR(255) NULL,
+      banner VARCHAR(255) NULL,
+      description TEXT NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS payments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      orderId VARCHAR(50) UNIQUE NOT NULL,
+      user_name VARCHAR(100) NOT NULL,
+      email VARCHAR(100) NULL,
+      event_id INT NULL,
+      ticket_qty INT NOT NULL DEFAULT 1,
+      totalBayar DECIMAL(12, 2) NOT NULL,
+      proof_of_transfer VARCHAR(255) NULL,
+      status ENUM('PENDING', 'PAID', 'REJECTED') DEFAULT 'PENDING',
+      verifiedAt TIMESTAMP NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE SET NULL
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_name VARCHAR(100) NOT NULL,
+      action_type ENUM('PURCHASE', 'ARTIST_REGISTER', 'EVENT_APPROVED', 'PAYMENT_VERIFIED') NOT NULL,
+      description VARCHAR(255) NOT NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  console.info("Skema tabel siap (auto-create).");
+
+  // Migrasi ringan: pastikan kolom phone ada di tabel users (DB lama pakai snake_case)
+  try {
+    const cols = await query("SHOW COLUMNS FROM users");
+    if (!cols.some((c) => c.Field === "phone")) {
+      await query("ALTER TABLE users ADD COLUMN phone VARCHAR(30) NULL AFTER role");
+      console.info("Migrasi: kolom phone ditambahkan ke users.");
+    }
+  } catch (error) {
+    console.error("Migrasi users.phone gagal:", error.message);
+  }
 
   try {
     const [rows] = await query("SELECT id FROM users WHERE email = ?", [adminEmail]);
@@ -76,6 +191,7 @@ const initSchema = async () => {
   await seedArtists();
   await seedEvents();
   await seedPayments();
+  await seedActivityLogs();
 };
 
 const seedIfEmpty = async (table, rows, insertSql) => {
@@ -164,6 +280,18 @@ const seedPayments = async () => {
     console.error("Failed to seed payments:", error.message);
   }
 };
+
+const seedActivityLogs = () =>
+  seedIfEmpty(
+    "activity_logs",
+    [
+      ["Budi Santoso", "PURCHASE", "membeli 2 tiket untuk Neon Night Tour 2026"],
+      ["Pendaftaran artis baru", "ARTIST_REGISTER", "The Midnight Sun bergabung ke Electric Pulse"],
+      ["Event Art Tech Expo", "EVENT_APPROVED", "Event disetujui oleh admin"],
+      ["Sarah Wijaya", "PURCHASE", "membeli 1 tiket untuk Electric Pulse Fest"]
+    ],
+    "INSERT INTO activity_logs (user_name, action_type, description) VALUES (?, ?, ?)"
+  );
 
 module.exports = {
   pool,
