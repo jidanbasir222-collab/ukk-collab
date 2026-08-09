@@ -677,14 +677,18 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const startServer = async () => {
+  // Listen TERLEBIH DAHULU agar server tetap hidup & tidak 502 di Railway
+  // meskipun database belum siap.
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+
+  // Inisialisasi database setelah server menyala; gagal connect hanya di-log,
+  // server Express tetap berjalan.
   try {
     await db.initSchema();
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
-    });
   } catch (error) {
     console.error("Database initialization failed:", error);
-    process.exit(1);
   }
 };
 
