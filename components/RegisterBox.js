@@ -13,7 +13,7 @@ export default function RegisterBox() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ukk-collab-production.up.railway.app";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
 
   const handleSubmit = async (e) => {
     e.preventDefault();

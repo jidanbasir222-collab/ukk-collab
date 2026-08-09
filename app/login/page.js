@@ -27,7 +27,7 @@ function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next");
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ukk-collab-production.up.railway.app";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
 
   const handleLogin = async (e) => {
     e.preventDefault();
