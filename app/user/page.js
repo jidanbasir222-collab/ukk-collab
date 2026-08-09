@@ -104,7 +104,7 @@ export default function UserConsole() {
 
 function UserConsoleContent() {
   const router = useRouter();
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://railway.app";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ukk-collab-production.up.railway.app";
   const [user, setUser] = useState(null);
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   

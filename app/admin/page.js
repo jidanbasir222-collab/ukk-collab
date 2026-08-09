@@ -44,7 +44,7 @@ import {
 import Chart from "../../components/Chart";
 import Instagram from "../../components/Instagram";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://railway.app";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ukk-collab-production.up.railway.app";
 
 const DEFAULT_PAYMENTS = [
   {
