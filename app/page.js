@@ -25,7 +25,7 @@ const features = [
   }
 ];
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://railway.app";
 
 const STATUS_STYLE = {
   ACTIVE: "bg-cyan-500/10 border-cyan-400/30 text-cyan-400",
