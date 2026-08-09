@@ -22,7 +22,7 @@ const getApiBase = () => {
       return `http://${host}:5000`;
     }
   }
-  return "http://localhost:5000";
+  return "https://ideal-wonder-production-445e.up.railway.app";
 };
 
 export const API_BASE = getApiBase();
