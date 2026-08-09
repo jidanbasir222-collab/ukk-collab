@@ -15,23 +15,19 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-const CORS_ORIGINS = (
-  process.env.CORS_ORIGINS ||
-  "http://localhost:3000,http://localhost:5001,https://ukk-collab-production-e097.up.railway.app"
-)
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-// CORS: izinkan origin frontend Railway (preflight OPTIONS ditangani otomatis oleh package cors)
+// CORS dipasang paling atas sebelum middleware lain & route, agar preflight selalu ter-handle
 app.use(
   cors({
-    origin: CORS_ORIGINS,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true
+    origin: true, // mengizinkan origin mana pun yang melakukan request
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
   })
 );
+
+// Pastikan preflight request ter-handle
+app.options("*", cors());
+
 app.use(express.json({ limit: "10mb" }));
 
 // Helper: tulis activity log ke tabel activity_logs
