@@ -185,6 +185,39 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// Login (email + password, cek ke database)
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email dan password wajib diisi." });
+  }
+
+  try {
+    const users = await db.query("SELECT id, name, email, passwordHash, role FROM users WHERE email = ?", [email]);
+    if (!users.length) {
+      return res.status(401).json({ error: "Email atau Password salah." });
+    }
+
+    const user = users[0];
+    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordMatches) {
+      return res.status(401).json({ error: "Email atau Password salah." });
+    }
+
+    const role = normalizeRole(user.role);
+    const token = generateToken({ id: user.id, name: user.name, email: user.email, role });
+    return res.json({
+      success: true,
+      message: "Login successful.",
+      user: { id: user.id, name: user.name, email: user.email, role },
+      token
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Gagal memproses login." });
+  }
+});
+
 // Reset password via tautan: kirim link ke email (bukan kode OTP)
 const RESET_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 menit
 

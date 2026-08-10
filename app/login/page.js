@@ -51,6 +51,10 @@ function LoginPageContent() {
         setAuthError(data.error || data.message || "Login gagal.");
         return;
       }
+      if (!data || !data.token || !data.user) {
+        setAuthError("Respons login tidak valid. Hubungi administrator.");
+        return;
+      }
 
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(data.user));

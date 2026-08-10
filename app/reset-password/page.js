@@ -22,10 +22,17 @@ function ResetPasswordContent() {
   // Mode 1: minta tautan reset
   const sendResetLink = async (e) => {
     e.preventDefault();
-    if (!email) return;
     setError("");
     setMessage("");
     setDevUrl("");
+    if (!email) {
+      setError("Email wajib diisi.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Format email tidak valid. Contoh: nama@contoh.com");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
