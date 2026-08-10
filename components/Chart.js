@@ -2,11 +2,23 @@
 
 import React, { useState } from "react";
 
+const MONTHLY_DATA = {
+  labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  values: [1000, 1900, 1500, 2500, 2200, 3000, 3800, 3200, 4200, 4900, 4600, 5300]
+};
+
+const DAILY_DATA = {
+  labels: ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"],
+  values: [320, 410, 280, 520, 680, 940, 730]
+};
+
 export default function Chart() {
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [period, setPeriod] = useState("monthly");
 
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const values = [1000, 1900, 1500, 2500, 2200, 3000, 3800, 3200, 4200, 4900, 4600, 5300];
+  const isMonthly = period === "monthly";
+  const labels = isMonthly ? MONTHLY_DATA.labels : DAILY_DATA.labels;
+  const values = isMonthly ? MONTHLY_DATA.values : DAILY_DATA.values;
 
   // SVG dimensions
   const width = 1000;
@@ -18,13 +30,13 @@ export default function Chart() {
 
   const chartWidth = width - paddingLeft - paddingRight;
   const chartHeight = height - paddingTop - paddingBottom;
-  const maxValue = 6000;
+  const maxValue = Math.max(...values, 1) * 1.15;
 
   // Calculate coordinates
   const points = values.map((val, i) => {
     const x = paddingLeft + (i / (values.length - 1)) * chartWidth;
     const y = height - paddingBottom - (val / maxValue) * chartHeight;
-    return { x, y, value: val, month: months[i], index: i };
+    return { x, y, value: val, label: labels[i], index: i };
   });
 
   // Generate smooth path using cubic bezier curves
@@ -34,10 +46,10 @@ export default function Chart() {
     for (let i = 0; i < pts.length - 1; i++) {
       const p0 = pts[i];
       const p1 = pts[i + 1];
-      // Control points
-      const cpX1 = p0.x + chartWidth / (values.length - 1) / 3;
+      const step = chartWidth / (values.length - 1);
+      const cpX1 = p0.x + step / 3;
       const cpY1 = p0.y;
-      const cpX2 = p1.x - chartWidth / (values.length - 1) / 3;
+      const cpX2 = p1.x - step / 3;
       const cpY2 = p1.y;
       path += ` C ${cpX1} ${cpY1}, ${cpX2} ${cpY2}, ${p1.x} ${p1.y}`;
     }
@@ -45,38 +57,73 @@ export default function Chart() {
   };
 
   const linePath = getBezierPath(points);
-  
+
   // Path for gradient area underneath
-  const areaPath = points.length > 0 
+  const areaPath = points.length > 0
     ? `${linePath} L ${points[points.length - 1].x} ${height - paddingBottom} L ${points[0].x} ${height - paddingBottom} Z`
     : "";
 
-  // Grid values (0, 1000, 2000, 3000, 4000, 5000, 6000)
-  const gridLines = [0, 1000, 2000, 3000, 4000, 5000, 6000];
+  // 5 grid lines between 0 and maxValue
+  const gridStep = maxValue / 5;
+  const gridLines = Array.from({ length: 6 }, (_, i) => Math.round(i * gridStep));
+
+  const handleExport = () => {
+    const header = ["Periode", "Tiket Terjual"];
+    const rows = points.map((p) => [p.label, p.value]);
+    const csv = [header.join(";"), ...rows.map((r) => r.join(";"))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `penjualan-${isMonthly ? "bulanan" : "harian"}-${new Date().toISOString().substring(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="w-full bg-[#141419] rounded-2xl border border-[#26262f] p-6 glow-card transition-all duration-300 hover:border-[#ff3b70]/30">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
         <div>
-          <h3 className="text-lg font-semibold text-white tracking-wide">Penjualan Tiket Bulanan</h3>
+          <h3 className="text-lg font-semibold text-white tracking-wide">
+            {isMonthly ? "Penjualan Tiket Bulanan" : "Penjualan Tiket Harian"}
+          </h3>
           <p className="text-xs text-[#8b8b9a] mt-1">Laporan akumulasi penjualan tiket dari seluruh kategori event.</p>
         </div>
         <div className="flex items-center gap-2 bg-[#09090b] p-1 rounded-xl border border-[#26262f] text-xs">
-          <button className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#ff3b70] to-[#8b5cf6] text-white font-medium shadow-md shadow-[#ff3b70]/20 transition-all duration-200">
+          <button
+            onClick={() => { setPeriod("monthly"); setHoveredPoint(null); }}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all duration-200 cursor-pointer ${
+              isMonthly
+                ? "bg-gradient-to-r from-[#ff3b70] to-[#8b5cf6] text-white shadow-md shadow-[#ff3b70]/20"
+                : "text-[#8b8b9a] hover:text-white"
+            }`}
+          >
             Bulanan
           </button>
-          <button className="px-3 py-1.5 rounded-lg text-[#8b8b9a] hover:text-white font-medium transition-colors">
+          <button
+            onClick={() => { setPeriod("daily"); setHoveredPoint(null); }}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all duration-200 cursor-pointer ${
+              !isMonthly
+                ? "bg-gradient-to-r from-[#ff3b70] to-[#8b5cf6] text-white shadow-md shadow-[#ff3b70]/20"
+                : "text-[#8b8b9a] hover:text-white"
+            }`}
+          >
             Harian
           </button>
-          <button className="px-3 py-1.5 ml-2 border border-[#26262f] rounded-lg text-white hover:bg-[#181822] hover:border-white/20 transition-all flex items-center gap-1.5 font-medium">
+          <button
+            onClick={handleExport}
+            className="px-3 py-1.5 ml-2 border border-[#26262f] rounded-lg text-white hover:bg-[#181822] hover:border-white/20 transition-all flex items-center gap-1.5 font-medium cursor-pointer"
+          >
             <span>Export</span>
           </button>
         </div>
       </div>
 
       <div className="relative w-full overflow-x-auto select-none">
-        <svg 
-          viewBox={`0 0 ${width} ${height}`} 
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
           className="w-full min-w-[750px] h-auto overflow-visible"
         >
           <defs>
@@ -189,7 +236,7 @@ export default function Chart() {
             </g>
           ))}
 
-          {/* Month labels */}
+          {/* Label bawah */}
           {points.map((pt, index) => (
             <text
               key={index}
@@ -201,7 +248,7 @@ export default function Chart() {
               textAnchor="middle"
               className="transition-all duration-150"
             >
-              {pt.month}
+              {pt.label}
             </text>
           ))}
         </svg>
@@ -216,7 +263,7 @@ export default function Chart() {
               transform: "translate(-50%, -100%)",
             }}
           >
-            <span className="text-[#8b8b9a] font-normal">{points[hoveredPoint].month}</span>
+            <span className="text-[#8b8b9a] font-normal">{points[hoveredPoint].label}</span>
             <span className="text-white font-mono text-sm">
               {points[hoveredPoint].value.toLocaleString("id-ID")} <span className="text-[10px] text-[#ff3b70] font-sans">Tiket</span>
             </span>

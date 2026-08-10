@@ -16,8 +16,14 @@ const STATUS_STYLE = {
   CLOSED: "bg-red-500/10 border-red-400/30 text-red-400"
 };
 
-const formatDate = (d) =>
-  d ? new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : "-";
+const formatDate = (d) => {
+  if (!d) return "-";
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+};
+
+const formatIDR = (num) => "Rp " + (Number(num) || 0).toLocaleString("id-ID");
 
 export default function EventsPage() {
   const router = useRouter();
@@ -26,7 +32,7 @@ export default function EventsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [category, setCategory] = useState("Semua Kategori");
   const [priceRange, setPriceRange] = useState(2000000);
-  const [sortBy, setSortBy] = useState("Terdekat");
+  const [sortBy, setSortBy] = useState("Tanggal Terdekat");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
@@ -52,26 +58,28 @@ export default function EventsPage() {
     let list = events.filter((ev) => {
       if (ev.status === "DRAFT") return false;
       if (category !== "Semua Kategori" && ev.category !== category) return false;
-      if (Number(ev.ticketPrice) > priceRange) return false;
+      if ((Number(ev.ticketPrice) || 0) > priceRange) return false;
       if (q && !(`${ev.name} ${ev.artist} ${ev.location} ${ev.category}`.toLowerCase().includes(q))) return false;
       return true;
     });
 
     switch (sortBy) {
       case "Harga Terendah":
-        list = [...list].sort((a, b) => Number(a.ticketPrice) - Number(b.ticketPrice));
+        list = [...list].sort((a, b) => (Number(a.ticketPrice) || 0) - (Number(b.ticketPrice) || 0));
         break;
       case "Harga Tertinggi":
-        list = [...list].sort((a, b) => Number(b.ticketPrice) - Number(a.ticketPrice));
+        list = [...list].sort((a, b) => (Number(b.ticketPrice) || 0) - (Number(a.ticketPrice) || 0));
         break;
       case "Paling Laris":
-        list = [...list].sort((a, b) => Number(b.sold) - Number(a.sold));
+        list = [...list].sort((a, b) => (Number(b.sold) || 0) - (Number(a.sold) || 0));
         break;
       default:
-        list = [...list].sort((a, b) => new Date(a.date) - new Date(b.date));
+        list = [...list].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
     }
     return list;
   }, [events, searchQuery, category, priceRange, sortBy]);
+
+  const maxTicketPrice = Math.max(2000000, ...events.map((ev) => Number(ev.ticketPrice) || 0));
 
   return (
     <main className="min-h-screen bg-[#05050d] text-[#f4f4f5] overflow-x-hidden font-sans">
@@ -167,7 +175,7 @@ export default function EventsPage() {
                   onChange={(e) => setSortBy(e.target.value)}
                   className="w-full bg-[#141419] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer font-semibold pr-10"
                 >
-                  <option>Terdekat</option>
+                  <option>Tanggal Terdekat</option>
                   <option>Harga Terendah</option>
                   <option>Harga Tertinggi</option>
                   <option>Paling Laris</option>
@@ -178,16 +186,17 @@ export default function EventsPage() {
 
             <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-2">
               <span className="text-[9px] font-bold text-[#8b8b9a] uppercase tracking-wider">
-                Harga Maksimal: <span className="text-[#ff3b70]">Rp {priceRange.toLocaleString("id-ID")}</span>
+                Harga Maksimal: <span className="text-[#ff3b70]">{formatIDR(priceRange)}</span>
               </span>
               <input
                 type="range"
                 min="100000"
-                max="2000000"
+                max={maxTicketPrice}
                 step="50000"
-                value={priceRange}
+                value={Math.min(priceRange, maxTicketPrice)}
                 onChange={(e) => setPriceRange(Number(e.target.value))}
                 className="w-full accent-[#ff3b70] h-1.5 cursor-pointer"
+                aria-label="Filter harga maksimum"
               />
             </div>
           </div>
@@ -245,7 +254,7 @@ export default function EventsPage() {
                       {item.location}
                     </span>
                     <span className="flex items-center gap-1.5 text-[#ff3b70] font-bold pt-0.5">
-                      Rp {Number(item.ticketPrice).toLocaleString("id-ID")}
+                      {formatIDR(item.ticketPrice)}
                     </span>
                   </div>
 

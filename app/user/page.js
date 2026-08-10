@@ -11,7 +11,6 @@ import {
   Radio,
   Settings,
   HelpCircle,
-  LifeBuoy,
   Search,
   Bell,
   MapPin,
@@ -27,12 +26,10 @@ import {
   LogOut,
   QrCode,
   X,
-  Activity,
   Heart,
   ChevronDown,
   Sun,
   Moon,
-  Info,
   User,
   UserCircle,
   Users
@@ -243,13 +240,18 @@ function UserConsoleContent() {
 
       const checkoutId = searchParams.get("checkout");
       if (checkoutId) {
-        const qtyParam = searchParams.get("qty");
-        if (qtyParam) setTicketQuantity(Math.min(Math.max(parseInt(qtyParam, 10) || 1, 1), 10));
+        const qtyParam = parseInt(searchParams.get("qty"), 10) || 1;
         fetch(`${API_BASE}/api/events/${checkoutId}`)
           .then((res) => (res.ok ? res.json() : null))
           .then((ev) => {
             if (ev) {
+              const remaining = Math.max(0, Number(ev.quota) - Number(ev.sold));
+              if (remaining <= 0) {
+                setActiveTab("discover");
+                return;
+              }
               setSelectedEvent(ev);
+              setTicketQuantity(Math.min(Math.max(qtyParam, 1), remaining));
               setActiveTab("checkout_details_view");
             } else {
               setActiveTab("discover");
@@ -264,16 +266,13 @@ function UserConsoleContent() {
 
   // Timer countdown
   useEffect(() => {
-    let interval = null;
-    if (activeTab === "checkout" && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else {
-      clearInterval(interval);
-    }
+    if (activeTab !== "checkout" || timeLeft <= 0) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
     return () => clearInterval(interval);
-  }, [activeTab, timeLeft]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Pricing calculations (IDR)
   const getTicketPrice = () => {
@@ -302,6 +301,12 @@ function UserConsoleContent() {
   const subtotal = ticketPrice * ticketQuantity + addonPrice;
   const taxes = Math.round(subtotal * 0.1 * 100) / 100;
   const total = subtotal + taxes;
+
+  // Nilai kuota yang aman (hindari NaN kalau data event tidak lengkap)
+  const selectedEventQuota = Number(selectedEvent?.quota) || 0;
+  const selectedEventSold = Number(selectedEvent?.sold) || 0;
+  const selectedEventRemaining = Math.max(0, selectedEventQuota - selectedEventSold);
+  const selectedEventSoldOut = selectedEventQuota > 0 && selectedEventSold >= selectedEventQuota;
 
   const triggerNotification = (msg) => {
     setNotification(msg);
@@ -334,6 +339,19 @@ function UserConsoleContent() {
   const handlePayment = async (e) => {
     e.preventDefault();
     if (isPaying) return;
+
+    if (!fullName.trim()) {
+      triggerNotification("Nama lengkap wajib diisi sebelum membayar.");
+      return;
+    }
+    if (!emailAddress.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress.trim())) {
+      triggerNotification("Email valid wajib diisi sebelum membayar.");
+      return;
+    }
+    if (!selectedEvent) {
+      triggerNotification("Silakan pilih event terlebih dahulu.");
+      return;
+    }
     setIsPaying(true);
 
     try {
@@ -345,10 +363,8 @@ function UserConsoleContent() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          user: fullName || "Guest",
-          email: emailAddress || "guest@example.com",
-          event: selectedEvent ? selectedEvent.name : "Neon Night Tour 2024",
-          eventId: selectedEvent ? selectedEvent.id : null,
+          event: selectedEvent.name,
+          eventId: selectedEvent.id,
           ticketQty: ticketQuantity,
           totalBayar: Math.round(total)
         })
@@ -382,12 +398,13 @@ function UserConsoleContent() {
                 image: (ev && (ev.poster || ev.banner)) || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
                 status: "Active"
               };
-              setUserTickets([newTicket, ...userTickets]);
+              setUserTickets((prev) => [newTicket, ...prev]);
               setLatestOrderInfo({
                 orderId: data.payment.orderId,
                 items: `${ticketQuantity}x ${selectedEvent ? selectedEvent.name : "General"}`,
                 total: formatIDR(total)
               });
+              setIsPaying(false);
               setShowSuccessModal(true);
               setTimeLeft(284);
             }
@@ -489,6 +506,7 @@ function UserConsoleContent() {
   };
 
   // Live data: filtered event list for Discover tab
+  const maxTicketPrice = Math.max(1500000, ...(eventsList || []).map((ev) => Number(ev.ticketPrice) || 0));
   const visibleEvents = (eventsList || [])
     .filter((ev) => ev.status !== "DRAFT")
     .filter((ev) => {
@@ -834,9 +852,9 @@ function UserConsoleContent() {
                       onClick={() => {
                         setFilterConcert(true);
                         setFilterConcertFestival(true);
-                        setFilterClubNight(false);
-                        setPriceRange(150);
-                        setSearchQuery("Synthwave");
+                        setFilterClubNight(true);
+                        setPriceRange(maxTicketPrice);
+                        setSearchQuery("");
                       }}
                       className="text-xs font-bold text-[#ff3b70] hover:text-[#ff5c8a] hover:underline"
                     >
@@ -885,11 +903,12 @@ function UserConsoleContent() {
                       <input
                         type="range"
                         min="100000"
-                        max="1500000"
+                        max={maxTicketPrice}
                         step="50000"
-                        value={priceRange}
+                        value={Math.min(priceRange, maxTicketPrice)}
                         onChange={(e) => setPriceRange(Number(e.target.value))}
                         className="w-full accent-[#ff3b70] bg-[#e5e7eb] rounded-lg appearance-none h-1 cursor-pointer"
+                        aria-label="Filter harga maksimum"
                       />
                       <div className="flex justify-between items-center text-xs font-mono font-bold">
                         <span>Rp 100rb</span>
@@ -961,7 +980,7 @@ function UserConsoleContent() {
                       const evDate = item.date
                         ? new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
                         : "TBA";
-                      const soldOut = item.status === "SOLD OUT" || item.status === "CLOSED" || Number(item.sold) >= Number(item.quota);
+                      const soldOut = item.status === "SOLD OUT" || item.status === "CLOSED" || (Number(item.quota) > 0 && Number(item.sold) >= Number(item.quota));
                       return (
                       <div
                         key={item.id}
@@ -1118,10 +1137,10 @@ function UserConsoleContent() {
                       </p>
                       <div className="flex items-center justify-between pt-2 mt-1 border-t border-[#26262f]/10 text-[10px] font-mono">
                         <span className="text-[#8b8b9a] font-semibold">
-                          Terjual {Number(selectedEvent.sold) || 0} / {Number(selectedEvent.quota) || 0}
+                          Terjual {selectedEventSold} / {selectedEventQuota}
                         </span>
-                        <span className={Number(selectedEvent.sold) >= Number(selectedEvent.quota) ? "text-red-400 font-extrabold" : "text-emerald-500 font-extrabold"}>
-                          {Number(selectedEvent.sold) >= Number(selectedEvent.quota) ? "HABIS" : "TERSEDIA"}
+                        <span className={selectedEventSoldOut ? "text-red-400 font-extrabold" : "text-emerald-500 font-extrabold"}>
+                          {selectedEventSoldOut ? "HABIS" : "TERSEDIA"}
                         </span>
                       </div>
                     </div>
@@ -1137,7 +1156,7 @@ function UserConsoleContent() {
                       </button>
                       <span className={`text-xs font-mono font-extrabold w-6 text-center ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{ticketQuantity}</span>
                       <button
-                        disabled={ticketQuantity >= (Number(selectedEvent.quota) - Number(selectedEvent.sold))}
+                        disabled={selectedEventRemaining <= 0 || ticketQuantity >= selectedEventRemaining}
                         onClick={() => setTicketQuantity(ticketQuantity + 1)}
                         className="text-[#8b8b9a] hover:text-white cursor-pointer disabled:opacity-30"
                       >
@@ -1153,7 +1172,7 @@ function UserConsoleContent() {
                     </div>
 
                     <button
-                      disabled={Number(selectedEvent.sold) >= Number(selectedEvent.quota) || selectedEvent.status === "CLOSED"}
+                      disabled={selectedEventSoldOut || selectedEvent?.status === "CLOSED"}
                       onClick={() => {
                         setTimeLeft(284);
                         setActiveTab("checkout");
@@ -1395,10 +1414,21 @@ function UserConsoleContent() {
               </div>
 
               {/* Grid of Tickets cards (Screenshot 4) */}
+              {userTickets.length === 0 ? (
+                <div className={`text-center py-16 rounded-2xl border ${theme === "dark" ? "bg-[#141419] border-[#26262f]" : "bg-white border-[#e5e7eb]"}`}>
+                  <QrCode className="w-10 h-10 mx-auto mb-3 text-[#8b8b9a]" />
+                  <p className="text-sm font-bold text-[#8b8b9a]">Belum ada tiket</p>
+                  <p className="text-xs text-[#8b8b9a]/70 mt-1">Tiket kamu akan muncul di sini setelah pembayaran berhasil.</p>
+                </div>
+              ) : (
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {userTickets
                   .filter((t) => (ticketFilter === "upcoming" ? t.status === "Active" : t.status !== "Active"))
-                  .map((ticket) => (
+                  .map((ticket) => {
+                    const parts = typeof ticket.date === "string" ? ticket.date.split(" ") : [];
+                    const month = parts[0] && parts[0] !== "TBA" ? parts[0] : "—";
+                    const day = parts[1] && !isNaN(parts[1]) ? parts[1] : "—";
+                    return (
                     <div
                       key={ticket.id}
                       className={`border rounded-3xl overflow-hidden flex flex-col justify-between hover:border-[#ff3b70]/40 transition-all duration-300 group shadow-sm ${
@@ -1417,8 +1447,8 @@ function UserConsoleContent() {
                         
                         <div className="absolute bottom-3 left-3 bg-[#18181f]/85 border border-white/10 rounded-xl p-2 text-center text-white min-w-[50px] font-mono leading-none">
                           <span className="text-[9px] uppercase tracking-wider block text-[#8b8b9a] font-bold">Month</span>
-                          <span className="text-sm font-extrabold mt-1 block">{ticket.date.split(" ")[0]}</span>
-                          <span className="text-xl font-extrabold mt-0.5 block">{ticket.date.split(" ")[1] || "24"}</span>
+                          <span className="text-sm font-extrabold mt-1 block">{month}</span>
+                          <span className="text-xl font-extrabold mt-0.5 block">{day}</span>
                         </div>
                       </div>
 
@@ -1455,8 +1485,10 @@ function UserConsoleContent() {
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
               </div>
+              )}
             </div>
           )}
 
@@ -1859,13 +1891,16 @@ function UserConsoleContent() {
             </div>
 
             <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-xl">
-              <div className="flex gap-0.5 h-24 w-full items-stretch justify-center bg-white px-2">
-                {[
-                  3,1,2,4,1,3,2,1,4,2,1,3,1,2,1,4,1,2,3,1,2,1,4,2,1,3,2,1,4,1,2,3,1,1,3,2
-                ].map((width, idx) => (
-                  <div key={idx} className="bg-[#09090b] rounded-full" style={{ width: `${width * 2}px` }} />
-                ))}
-              </div>
+              {/* QR asli: dapat dipindai dan berisi data tiket */}
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+                  `EP-TICKET|${activeAccessTicket.code}|${activeAccessTicket.event}`
+                )}`}
+                alt={`QR Code tiket ${activeAccessTicket.code}`}
+                className="w-44 h-44"
+                width={176}
+                height={176}
+              />
               <span className="text-xs font-mono font-bold tracking-widest text-[#09090b]">
                 {activeAccessTicket.code}
               </span>
@@ -1921,11 +1956,32 @@ function UserConsoleContent() {
             <div className="space-y-3.5 pt-2">
               <button
                 type="button"
-                onClick={() => triggerNotification("Downloading ticket PDF...")}
+                onClick={() => {
+                  const content = [
+                    "ELECTRIC PULSE - E-TICKET",
+                    "==============================",
+                    `Order ID : ${latestOrderInfo.orderId}`,
+                    `Item     : ${latestOrderInfo.items}`,
+                    `Total    : ${latestOrderInfo.total}`,
+                    "",
+                    "Tunjukkan kode ini di pintu masuk venue.",
+                    "Terima kasih sudah membeli tiket di Electric Pulse!"
+                  ].join("\n");
+                  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${latestOrderInfo.orderId}-e-ticket.txt`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                  triggerNotification("E-ticket berhasil diunduh!");
+                }}
                 className="w-full py-3.5 rounded-xl text-white font-bold text-xs gradient-btn shadow-md flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Ticket className="w-4 h-4" />
-                <span>Download Ticket</span>
+                <span>Download E-Ticket</span>
               </button>
 
               <button

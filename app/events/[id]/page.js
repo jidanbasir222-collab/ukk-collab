@@ -70,10 +70,17 @@ export default function EventDetailPage() {
   }
 
   const sold = Number(event.sold) || 0;
-  const quota = Number(event.quota) || 1;
+  const quota = Number(event.quota) || 0;
   const remaining = Math.max(quota - sold, 0);
-  const occupancy = Math.min(Math.round((sold / quota) * 100), 100);
-  const soldOut = event.status === "SOLD OUT" || event.status === "CLOSED" || remaining <= 0;
+  const occupancy = quota > 0 ? Math.min(Math.round((sold / quota) * 100), 100) : 0;
+  const soldOut = event.status === "SOLD OUT" || event.status === "CLOSED" || (quota > 0 && remaining <= 0);
+
+  const formatEventDate = (dateStr) => {
+    if (!dateStr) return "Tanggal belum diumumkan";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "Tanggal belum diumumkan";
+    return d.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  };
 
   const handleOrder = () => {
     if (!isLoggedIn) {
@@ -140,7 +147,7 @@ export default function EventDetailPage() {
               </span>
               <span className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                 <Calendar className="w-4 h-4 text-[#ff3b70]" />
-                {new Date(event.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+                {formatEventDate(event.date)}
               </span>
               <span className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                 <MapPin className="w-4 h-4 text-[#ff3b70]" />
@@ -186,7 +193,7 @@ export default function EventDetailPage() {
                 <p className="text-[11px] font-bold text-red-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" /> Tiket sudah habis atau event ditutup.
                 </p>
-              ) : remaining <= quota * 0.2 ? (
+              ) : remaining <= quota * 0.2 && quota > 0 ? (
                 <p className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5" /> Sisa {remaining} tiket! Segera pesan sebelum kehabisan.
                 </p>
@@ -210,7 +217,7 @@ export default function EventDetailPage() {
                 <div>
                   <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold">Harga Tiket</span>
                   <p className="text-xl font-mono font-extrabold text-[#ff3b70] mt-1">
-                    Rp {Number(event.ticketPrice).toLocaleString("id-ID")}
+                    Rp {(Number(event.ticketPrice) || 0).toLocaleString("id-ID")}
                   </p>
                 </div>
                 <Music className="w-8 h-8 text-[#ff3b70]/40" />
@@ -223,6 +230,7 @@ export default function EventDetailPage() {
                   <button
                     disabled={qty <= 1 || soldOut}
                     onClick={() => setQty((v) => Math.max(1, v - 1))}
+                    aria-label="Kurangi jumlah tiket"
                     className="text-[#8b8b9a] hover:text-white cursor-pointer disabled:opacity-30 text-base font-bold"
                   >
                     −
@@ -231,6 +239,7 @@ export default function EventDetailPage() {
                   <button
                     disabled={soldOut || qty >= remaining}
                     onClick={() => setQty((v) => Math.min(remaining, v + 1))}
+                    aria-label="Tambah jumlah tiket"
                     className="text-[#8b8b9a] hover:text-white cursor-pointer disabled:opacity-30 text-base font-bold"
                   >
                     +
@@ -242,7 +251,7 @@ export default function EventDetailPage() {
                 <div>
                   <span className="text-[9px] uppercase tracking-wider text-[#8b8b9a] font-bold">Total Bayar</span>
                   <p className="text-xl font-mono font-extrabold text-white mt-1">
-                    Rp {(Number(event.ticketPrice) * qty).toLocaleString("id-ID")}
+                    Rp {((Number(event.ticketPrice) || 0) * qty).toLocaleString("id-ID")}
                   </p>
                 </div>
               </div>

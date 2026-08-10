@@ -32,7 +32,8 @@ export default function RegisterBox() {
         return;
       }
       if (data.token) localStorage.setItem("token", data.token);
-      router.push("/");
+      if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
+      router.push(data.user?.role === "admin" ? "/admin" : "/user");
     } catch (err) {
       setError("Terjadi kesalahan jaringan.");
     } finally {
@@ -97,7 +98,7 @@ export default function RegisterBox() {
 
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-[#8b8b9a]">Akun biasa hanya dapat mendaftar sebagai user.</span>
-          <Link href="/" className="text-xs text-[#8b8b9a] hover:text-white underline">Already have an account?</Link>
+          <Link href="/login" className="text-xs text-[#8b8b9a] hover:text-white underline">Already have an account?</Link>
         </div>
 
         <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99]">

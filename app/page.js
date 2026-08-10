@@ -47,6 +47,17 @@ const formatEventDate = (dateStr) => {
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [events, setEvents] = useState([]);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch (err) {
+      setShareCopied(false);
+    }
+  };
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -254,7 +265,7 @@ export default function Home() {
                       {item.location}
                     </span>
                     <span className="flex items-center gap-1.5 text-[#ff3b70] font-bold pt-0.5">
-                      Rp {Number(item.ticketPrice).toLocaleString("id-ID")}
+                      Rp {(Number(item.ticketPrice) || 0).toLocaleString("id-ID")}
                     </span>
                   </div>
                 </div>
@@ -273,11 +284,15 @@ export default function Home() {
             <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
             <a href="#" className="hover:text-white transition-colors">Contact Us</a>
             <button
-              onClick={() => triggerNotification("Share link copied to clipboard.")}
+              onClick={handleShare}
               className="text-[#8b8b9a] hover:text-white transition-colors p-1"
+              title="Salin tautan halaman"
             >
               <Share2 className="w-3.5 h-3.5" />
             </button>
+            {shareCopied && (
+              <span className="text-[#06b6d4] text-xs font-bold animate-fade-in">Tautan disalin!</span>
+            )}
           </div>
         </div>
       </footer>

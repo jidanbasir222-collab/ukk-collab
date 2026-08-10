@@ -2,6 +2,11 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
 const JWT_SECRET = process.env.JWT_SECRET || "electricpulse-secret";
+
+const PLACEHOLDER_SECRETS = ["your_jwt_secret_here", "electricpulse-secret", "secret", "changeme"];
+if (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase())) {
+  console.warn("PERINGATAN KEAMANAN: JWT_SECRET masih placeholder. Ganti dengan string acak panjang di server/.env (dan di Railway)!");
+}
 const TOKEN_EXPIRES_IN = "2h";
 
 const normalizeRole = (role) => {

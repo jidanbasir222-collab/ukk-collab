@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -421,7 +420,7 @@ export default function Home() {
     }
   };
 
-  // Save Category Handler (POST to API)
+  // Save Category Handler (POST/PUT to API)
   const handleSaveCategory = async (e) => {
     e.preventDefault();
     if (!categoryForm.name) {
@@ -431,23 +430,39 @@ export default function Home() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE}/api/categories`, {
-        method: "POST",
+      const isEditing = editingCategoryId !== null;
+      const res = await fetch(`${API_BASE}/api/categories${isEditing ? `/${editingCategoryId}` : ""}`, {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           name: categoryForm.name,
+          icon: categoryForm.icon || null,
+          color: categoryForm.color || null,
           description: categoryForm.description || ""
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal menambahkan kategori.");
+      if (!res.ok) throw new Error(data.error || "Gagal menyimpan kategori.");
 
       await refreshCategories();
       setCategoryForm({ name: "", icon: "music", color: "pink", description: "" });
-      triggerNotification("Kategori baru berhasil ditambahkan!");
+      setEditingCategoryId(null);
+      triggerNotification(isEditing ? "Kategori berhasil diperbarui!" : "Kategori baru berhasil ditambahkan!");
     } catch (error) {
-      triggerNotification(error.message || "Gagal menambahkan kategori.");
+      triggerNotification(error.message || "Gagal menyimpan kategori.");
     }
+  };
+
+  // Mulai edit kategori: isi form dari data yang dipilih
+  const handleEditCategory = (cat) => {
+    setEditingCategoryId(cat.id);
+    setCategoryForm({
+      name: cat.name || "",
+      icon: cat.icon || "music",
+      color: cat.color || "pink",
+      description: cat.description || ""
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Delete Category Handler (DELETE to API)
@@ -563,9 +578,12 @@ export default function Home() {
     color: "pink",
     description: ""
   });
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
 
   // Search State
   const [searchQuery, setSearchQuery] = useState("");
+  // Payment status filter
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState("SEMUA");
   // Artist Filter state
   const [artistGenreFilter, setArtistGenreFilter] = useState("Semua Genre");
 
@@ -767,15 +785,44 @@ export default function Home() {
     return matchesSearch && matchesGenre;
   });
 
-  // Filtered Payments by Search Query
+  // Filtered Payments by Search Query + status
   const filteredPayments = payments.filter(pay => {
     const pQuery = searchQuery.toLowerCase();
-    return (
-      pay.user.toLowerCase().includes(pQuery) ||
-      pay.orderId.toLowerCase().includes(pQuery) ||
-      pay.event.toLowerCase().includes(pQuery)
-    );
+    const matchesQuery =
+      (pay.user || "").toLowerCase().includes(pQuery) ||
+      (pay.orderId || "").toLowerCase().includes(pQuery) ||
+      (pay.event || "").toLowerCase().includes(pQuery);
+    const matchesStatus = paymentStatusFilter === "SEMUA" || pay.status === paymentStatusFilter;
+    return matchesQuery && matchesStatus;
   });
+
+  // Export pembayaran ke file CSV (bisa dibuka di Excel)
+  const handleExportPayments = () => {
+    if (filteredPayments.length === 0) {
+      triggerNotification("Tidak ada data pembayaran untuk diekspor.");
+      return;
+    }
+    const header = ["Order ID", "Nama User", "Event", "Total Bayar", "Status", "Dibuat"];
+    const rows = filteredPayments.map((p) => [
+      `"${(p.orderId || "").replace(/"/g, '""')}"`,
+      `"${(p.user || "").replace(/"/g, '""')}"`,
+      `"${(p.event || "").replace(/"/g, '""')}"`,
+      Number(p.totalBayar || 0),
+      p.status || "",
+      p.createdAt ? String(p.createdAt).substring(0, 10) : ""
+    ]);
+    const csv = [header.join(";"), ...rows.map((r) => r.join(";"))].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pembayaran-${new Date().toISOString().substring(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    triggerNotification(`Diekspor ${filteredPayments.length} transaksi ke CSV.`);
+  };
 
   // Dynamic values based on payments history states
   const pendingPaymentsCount = payments.filter(p => p.status === "PENDING").length;
@@ -1127,19 +1174,21 @@ export default function Home() {
 
                     <div className="flex flex-col gap-5">
                       {events.slice(0, 2).map((ev) => {
-                        const occupancyPercent = Math.round((ev.sold / ev.quota) * 100);
+                        const evQuota = Number(ev.quota) || 0;
+                        const evSold = Number(ev.sold) || 0;
+                        const occupancyPercent = evQuota > 0 ? Math.round((evSold / evQuota) * 100) : 0;
                         return (
                           <div key={ev.id} className="flex flex-col gap-2">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-lg bg-[#0d0d10] border border-[#26262f] flex items-center justify-center text-xs font-bold text-[#ff3b70] shrink-0">
-                                  {ev.name.substring(0, 2).toUpperCase()}
+                                  {(ev.name || "?").substring(0, 2).toUpperCase()}
                                 </div>
                                 <div className="flex flex-col">
                                   <span className="text-sm font-bold text-white leading-snug">{ev.name}</span>
                                   <span className="text-[11px] text-[#8b8b9a] mt-0.5 leading-none flex items-center gap-1">
                                     <MapPin className="w-3 h-3 text-[#ff3b70]" />
-                                    {ev.location.split(",")[0]}
+                                    {(ev.location || "").split(",")[0]}
                                   </span>
                                 </div>
                               </div>
@@ -1261,7 +1310,9 @@ export default function Home() {
                             </tr>
                           ) : (
                             filteredEvents.map((ev) => {
-                              const occupancyPercent = Math.round((ev.sold / ev.quota) * 100);
+                              const evQuota = Number(ev.quota) || 0;
+                              const evSold = Number(ev.sold) || 0;
+                              const occupancyPercent = evQuota > 0 ? Math.round((evSold / evQuota) * 100) : 0;
                               
                               let statusBadgeClass = "";
                               switch (ev.status) {
@@ -1283,7 +1334,7 @@ export default function Home() {
                                   <td className="py-5 px-6">
                                     <div className="flex items-center gap-3.5">
                                       <div className="w-10 h-10 rounded-lg bg-[#0d0d10] border border-[#26262f] flex items-center justify-center text-xs font-bold text-[#ff3b70] shrink-0">
-                                        {ev.name.substring(0, 2).toUpperCase()}
+                                        {(ev.name || "?").substring(0, 2).toUpperCase()}
                                       </div>
                                       <div className="flex flex-col gap-0.5 min-w-0">
                                         <span className="text-xs font-bold text-white truncate max-w-[200px]">{ev.name}</span>
@@ -1298,7 +1349,7 @@ export default function Home() {
                                         {new Date(ev.date).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
                                       </span>
                                       <span className="text-[10px] text-[#ff3b70] truncate max-w-[150px] font-medium">
-                                        {ev.location.split(",")[0]}
+                                        {(ev.location || "").split(",")[0]}
                                       </span>
                                     </div>
                                   </td>
@@ -1693,7 +1744,21 @@ export default function Home() {
                   <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
                     <div className="flex items-center gap-2 mb-6 border-b border-[#26262f]/40 pb-4">
                       <Plus className="w-4.5 h-4.5 text-[#ff3b70]" />
-                      <h3 className="text-sm font-bold tracking-wider text-white uppercase">Tambah Kategori Baru</h3>
+                      <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                        {editingCategoryId ? "Edit Kategori" : "Tambah Kategori Baru"}
+                      </h3>
+                      {editingCategoryId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingCategoryId(null);
+                            setCategoryForm({ name: "", icon: "music", color: "pink", description: "" });
+                          }}
+                          className="ml-auto text-[10px] font-bold text-[#8b8b9a] hover:text-white border border-[#26262f] rounded-lg px-2.5 py-1.5 transition-all cursor-pointer"
+                        >
+                          Batal Edit
+                        </button>
+                      )}
                     </div>
 
                     <form onSubmit={handleSaveCategory} className="flex flex-col gap-5">
@@ -1769,7 +1834,7 @@ export default function Home() {
                         type="submit"
                         className="w-full py-3.5 mt-1 rounded-xl text-white font-semibold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/10 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
                       >
-                        Simpan Kategori
+                        {editingCategoryId ? "Perbarui Kategori" : "Simpan Kategori"}
                       </button>
                     </form>
                   </div>
@@ -1849,7 +1914,7 @@ export default function Home() {
                               <td className="py-4.5 px-6 text-right">
                                 <div className="flex items-center justify-end gap-2">
                                   <button
-                                    onClick={() => triggerNotification(`Edit kategori "${cat.name}" is under development.`)}
+                                    onClick={() => handleEditCategory(cat)}
                                     className="p-1.5 rounded-lg border border-[#26262f]/80 bg-[#0d0d10]/40 text-[#8b8b9a] hover:text-white hover:border-[#ff3b70]/20 transition-all cursor-pointer"
                                     title="Edit Kategori"
                                   >
@@ -2178,15 +2243,21 @@ export default function Home() {
                     <CreditCard className="w-4.5 h-4.5 text-[#ff3b70]" /> Riwayat Pembayaran
                   </span>
                   <div className="flex gap-2">
+                    <div className="relative">
+                      <select
+                        value={paymentStatusFilter}
+                        onChange={(e) => setPaymentStatusFilter(e.target.value)}
+                        className="appearance-none py-2 pl-3 pr-9 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl cursor-pointer transition-colors focus:outline-none focus:border-[#ff3b70]/40"
+                      >
+                        <option value="SEMUA">Semua Status</option>
+                        <option value="PENDING">PENDING</option>
+                        <option value="PAID">PAID</option>
+                        <option value="REJECTED">REJECTED</option>
+                      </select>
+                      <Search className="w-3.5 h-3.5 text-[#50505f] pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+                    </div>
                     <button 
-                      onClick={() => triggerNotification("Filter status pembayaran...")}
-                      className="py-2 px-3.5 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Search className="w-3.5 h-3.5" />
-                      <span>Filter Status</span>
-                    </button>
-                    <button 
-                      onClick={() => triggerNotification("Ekspor log audit pembayaran sukses...")}
+                      onClick={handleExportPayments}
                       className="py-2 px-3.5 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Upload className="w-3.5 h-3.5 rotate-180" />

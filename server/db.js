@@ -139,6 +139,8 @@ const initSchema = async () => {
       ticket_qty INT NOT NULL DEFAULT 1,
       totalBayar DECIMAL(12, 2) NOT NULL,
       proof_of_transfer VARCHAR(255) NULL,
+      snap_token VARCHAR(255) NULL,
+      redirect_url VARCHAR(255) NULL,
       status ENUM('PENDING', 'PAID', 'REJECTED') DEFAULT 'PENDING',
       verifiedAt TIMESTAMP NULL,
       createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -167,6 +169,21 @@ const initSchema = async () => {
     }
   } catch (error) {
     console.error("Migrasi users.phone gagal:", error.message);
+  }
+
+  // Migrasi: kolom snap_token & redirect_url di payments (untuk transaksi Midtrans)
+  try {
+    const cols = await query("SHOW COLUMNS FROM payments");
+    if (!cols.some((c) => c.Field === "snap_token")) {
+      await query("ALTER TABLE payments ADD COLUMN snap_token VARCHAR(255) NULL AFTER proof_of_transfer");
+      console.info("Migrasi: kolom snap_token ditambahkan ke payments.");
+    }
+    if (!cols.some((c) => c.Field === "redirect_url")) {
+      await query("ALTER TABLE payments ADD COLUMN redirect_url VARCHAR(255) NULL AFTER snap_token");
+      console.info("Migrasi: kolom redirect_url ditambahkan ke payments.");
+    }
+  } catch (error) {
+    console.error("Migrasi payments.snap_token gagal:", error.message);
   }
 
   try {

@@ -1,9 +1,9 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const db = require("./db");
-const { snap } = require("./midtrans");
+const { snap, serverKey } = require("./midtrans");
 const {
   generateToken,
   authenticateToken,
@@ -72,7 +72,7 @@ app.post("/api/login", async (req, res) => {
     }
 
     const role = normalizeRole(user.role);
-    const token = generateToken({ id: user.id, email: user.email, role });
+    const token = generateToken({ id: user.id, name: user.name, email: user.email, role });
     return res.json({
       success: true,
       message: "Login successful.",
@@ -103,7 +103,7 @@ app.post("/api/auth/register", async (req, res) => {
       [name, email, passwordHash]
     );
 
-    const token = generateToken({ id: result.insertId, email, role: "user" });
+    const token = generateToken({ id: result.insertId, name, email, role: "user" });
     return res.status(201).json({
       success: true,
       message: "Registrasi berhasil.",
@@ -119,37 +119,69 @@ app.post("/api/auth/register", async (req, res) => {
 // Midtrans webhook notification handler (auto-updates payment status)
 // NOTE: placed before authenticateToken middleware so Midtrans can reach it without a Bearer token
 app.post("/api/payments/notification", async (req, res) => {
-  const { order_id, transaction_status, fraud_status } = req.body;
+  const { order_id, transaction_status, fraud_status, status_code, gross_amount, signature_key } = req.body;
 
   if (!order_id || !transaction_status) {
     return res.status(400).json({ error: "Payload notifikasi tidak valid." });
   }
 
+  // Verifikasi signature agar tidak ada pihak lain yang bisa memalsukan notifikasi
+  if (serverKey) {
+    const crypto = require("crypto");
+    const expected = crypto
+      .createHash("sha512")
+      .update(`${order_id}${status_code || ""}${gross_amount || ""}${serverKey}`)
+      .digest("hex");
+    if (!signature_key || expected !== String(signature_key).toLowerCase()) {
+      return res.status(403).json({ error: "Signature notifikasi tidak valid." });
+    }
+  }
+
+  // Map status Midtrans -> status aplikasi
+  // settlement/capture = lunas. challenge/fraud belum final -> jangan langsung PAID.
   let status = "PENDING";
   if (transaction_status === "capture" || transaction_status === "settlement") {
-    status = "PAID";
-  } else if (transaction_status === "deny" || transaction_status === "cancel" || transaction_status === "expire") {
+    if (fraud_status === "challenge" || fraud_status === "deny") {
+      status = "PENDING"; // masih direview, jangan ubah ke PAID
+    } else {
+      status = "PAID";
+    }
+  } else if (["deny", "cancel", "expire", "refund", "chargeback", "partial_refund", "partial_chargeback"].includes(transaction_status)) {
     status = "REJECTED";
+  } else if (transaction_status === "pending" || transaction_status === "authorize") {
+    status = "PENDING";
   }
 
   try {
-    const [existing] = await db.query("SELECT status, event_id, ticket_qty, user_name FROM payments WHERE orderId = ?", [order_id]);
+    const [existing] = await db.query("SELECT status, event_id, ticket_qty, user_name, totalBayar FROM payments WHERE orderId = ?", [order_id]);
     if (!existing) {
       return res.status(404).json({ error: "Transaksi tidak ditemukan." });
     }
 
-    await db.execute(
-      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ?",
+    // Cegah transisi mundur: pembayaran PAID tidak boleh ditimpa PENDING/REJECTED oleh webhook terlambat
+    if (existing.status === "PAID" && status === "PENDING") {
+      return res.json({ success: true, ignored: "already_paid" });
+    }
+
+    // Perbarui status secara atomik â€” hanya berhasil kalau status sebelumnya belum PAID
+    const result = await db.execute(
+      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
       [status, status === "PAID" ? new Date() : null, order_id]
     );
 
-    // Guard idempotensi: hanya tambah stok terjual sekali per transaksi (webhook Midtrans bisa retry berkali-kali)
-    if (status === "PAID" && existing.status !== "PAID" && existing.event_id) {
+    // Tambah stok terjual hanya jika transisi ini yang memicu PAID (hasil update > 0 baris)
+    if (status === "PAID" && result.affectedRows > 0 && existing.event_id) {
       await db.execute(
         "UPDATE events SET sold = sold + ? WHERE id = ?",
         [existing.ticket_qty || 1, existing.event_id]
       );
       await logActivity(existing.user_name || "Sistem", "PURCHASE", `Pembayaran ${order_id} terverifikasi otomatis (Midtrans).`);
+    } else if (status === "REJECTED" && result.affectedRows > 0 && existing.status === "PAID" && existing.event_id) {
+      // Refund/chargeback setelah lunas: kembalikan stok yang terlanjur bertambah
+      await db.execute(
+        "UPDATE events SET sold = GREATEST(sold - ?, 0) WHERE id = ?",
+        [existing.ticket_qty || 1, existing.event_id]
+      );
     }
 
     res.json({ success: true });
@@ -162,7 +194,7 @@ app.post("/api/payments/notification", async (req, res) => {
 // 2. Public Events (untuk halaman publik: landing, daftar event, detail event)
 app.get("/api/events", async (req, res) => {
   try {
-    const events = await db.query("SELECT * FROM events ORDER BY date ASC");
+    const events = await db.query("SELECT * FROM events WHERE status <> 'DRAFT' ORDER BY date ASC");
     res.json(events);
   } catch (error) {
     console.error(error);
@@ -171,8 +203,12 @@ app.get("/api/events", async (req, res) => {
 });
 
 app.get("/api/events/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "ID event tidak valid." });
+  }
   try {
-    const [rows] = await db.query("SELECT * FROM events WHERE id = ?", [req.params.id]);
+    const [rows] = await db.query("SELECT * FROM events WHERE id = ? AND status <> 'DRAFT'", [id]);
     if (!rows) {
       return res.status(404).json({ error: "Event tidak ditemukan." });
     }
@@ -307,7 +343,7 @@ app.get("/api/me/tickets", async (req, res) => {
 
 // ============ DASHBOARD (ADMIN) ============
 
-app.get("/api/dashboard/stats", async (req, res) => {
+app.get("/api/dashboard/stats", requireRole("admin"), async (req, res) => {
   try {
     const [eventsRow] = await db.query("SELECT COUNT(*) AS totalEvents, SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) AS activeEvents, SUM(sold) AS totalSoldTickets, SUM(sold * ticketPrice) AS totalRevenue, SUM(quota) AS totalQuota FROM events");
     const [revenueRow] = await db.query("SELECT COALESCE(SUM(totalBayar), 0) AS verifiedRevenueToday FROM payments WHERE status = 'PAID' AND DATE(verifiedAt) = CURRENT_DATE()");
@@ -331,7 +367,7 @@ app.get("/api/dashboard/stats", async (req, res) => {
 });
 
 // Aktivitas terakhir (activity logs)
-app.get("/api/dashboard/activity", async (req, res) => {
+app.get("/api/dashboard/activity", requireRole("admin"), async (req, res) => {
   try {
     const logs = await db.query("SELECT * FROM activity_logs ORDER BY createdAt DESC LIMIT 20");
     res.json(logs);
@@ -348,11 +384,24 @@ app.post("/api/events", requireRole("admin"), async (req, res) => {
   if (!name || !artist || !category || !date || !location) {
     return res.status(400).json({ error: "Field utama event wajib diisi." });
   }
+  const price = Number(ticketPrice);
+  const qty = Number(quota);
+  const allowedStatus = ["ACTIVE", "SOLD OUT", "CLOSED", "DRAFT"];
+  if (!Number.isFinite(price) || price < 0) {
+    return res.status(400).json({ error: "Harga tiket tidak valid." });
+  }
+  if (!Number.isInteger(qty) || qty <= 0) {
+    return res.status(400).json({ error: "Kuota tiket harus bilangan bulat positif." });
+  }
+  if (isNaN(new Date(date).getTime())) {
+    return res.status(400).json({ error: "Tanggal event tidak valid." });
+  }
+  const finalStatus = status && allowedStatus.includes(status) ? status : "ACTIVE";
 
   try {
     const result = await db.execute(
       "INSERT INTO events (name, artist, category, date, time, location, ticketPrice, quota, sold, status, poster, banner, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
-      [name, artist, category, date, time || "19:00", location, Number(ticketPrice) || 0, Number(quota) || 5000, status || "ACTIVE", poster || null, banner || null, description || null]
+      [name, artist, category, date, time || "19:00", location, price, qty, finalStatus, poster || null, banner || null, description || null]
     );
     const [rows] = await db.query("SELECT * FROM events WHERE id = ?", [result.insertId]);
     await logActivity(req.user.name || "Admin", "EVENT_APPROVED", `Event "${name}" ditambahkan.`);
@@ -532,37 +581,47 @@ app.get("/api/payments", requireRole("admin"), async (req, res) => {
 
 // Create a Midtrans Snap transaction and store the order in DB
 app.post("/api/payments/create", async (req, res) => {
-  const { user, email, event, eventId, ticketQty, totalBayar } = req.body;
-  if (!user || !email || !event || !ticketQty || !totalBayar) {
+  const { event, eventId, ticketQty, totalBayar } = req.body;
+  const user = req.user.name || "Guest";
+  const email = req.user.email;
+
+  const qty = Number(ticketQty);
+  if (!Number.isInteger(qty) || qty <= 0) {
+    return res.status(400).json({ error: "Jumlah tiket tidak valid." });
+  }
+  if (!Number.isFinite(Number(totalBayar)) || Number(totalBayar) <= 0) {
+    return res.status(400).json({ error: "Jumlah pembayaran tidak valid." });
+  }
+  if (!event || !eventId) {
     return res.status(400).json({ error: "Data pembayaran tidak lengkap." });
   }
 
+  let orderId = null;
   try {
     // Validasi kuota tiket (stok) sebelum membuat transaksi
-    if (eventId) {
-      const [ev] = await db.query("SELECT name, ticketPrice, quota, sold, status FROM events WHERE id = ?", [eventId]);
-      if (!ev) {
-        return res.status(404).json({ error: "Event tidak ditemukan." });
-      }
-      if (ev.status === "SOLD OUT" || ev.status === "CLOSED") {
-        return res.status(400).json({ error: `Tiket untuk event "${ev.name}" sudah tidak tersedia.` });
-      }
-      const remaining = Number(ev.quota) - Number(ev.sold);
-      if (Number(ticketQty) > remaining) {
-        return res.status(400).json({ error: `Stok tiket tidak mencukupi. Sisa tiket: ${remaining}.` });
-      }
-      // Validasi nominal: hitung ulang dari harga di DB agar totalBayar tidak bisa dimanipulasi client
-      const minimumTotal = Number(ev.ticketPrice) * Number(ticketQty);
-      if (Number(totalBayar) < minimumTotal) {
-        return res.status(400).json({ error: `Jumlah pembayaran tidak valid. Minimal Rp ${minimumTotal.toLocaleString("id-ID")}.` });
-      }
+    const [ev] = await db.query("SELECT name, ticketPrice, quota, sold, status FROM events WHERE id = ?", [eventId]);
+    if (!ev) {
+      return res.status(404).json({ error: "Event tidak ditemukan." });
+    }
+    if (ev.status === "SOLD OUT" || ev.status === "CLOSED" || ev.status === "DRAFT") {
+      return res.status(400).json({ error: `Tiket untuk event "${ev.name}" sudah tidak tersedia.` });
+    }
+    const remaining = Number(ev.quota) - Number(ev.sold);
+    if (qty > remaining) {
+      return res.status(400).json({ error: `Stok tiket tidak mencukupi. Sisa tiket: ${remaining}.` });
+    }
+    // Validasi nominal: hitung ulang dari harga di DB agar totalBayar tidak bisa dimanipulasi client
+    const minimumTotal = Number(ev.ticketPrice) * qty;
+    if (Number(totalBayar) < minimumTotal) {
+      return res.status(400).json({ error: `Jumlah pembayaran tidak valid. Minimal Rp ${minimumTotal.toLocaleString("id-ID")}.` });
     }
 
-    const orderId = `EP-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const orderIdValue = `EP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    orderId = orderIdValue;
 
     const result = await db.execute(
       "INSERT INTO payments (orderId, user_name, email, event_id, ticket_qty, totalBayar, status) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')",
-      [orderId, user, email, eventId || null, Number(ticketQty), Number(totalBayar)]
+      [orderId, user, email, eventId, qty, Number(totalBayar)]
     );
 
     const parameter = {
@@ -572,10 +631,10 @@ app.post("/api/payments/create", async (req, res) => {
       },
       item_details: [
         {
-          id: orderId,
-          price: Number(totalBayar),
-          quantity: 1,
-          name: `Tiket ${event}`
+          id: eventId,
+          price: Number(ev.ticketPrice),
+          quantity: qty,
+          name: `Tiket ${ev.name}`
         }
       ],
       customer_details: {
@@ -588,6 +647,11 @@ app.post("/api/payments/create", async (req, res) => {
     };
 
     const snapResponse = await snap.createTransaction(parameter);
+    await db.execute("UPDATE payments SET snap_token = ?, redirect_url = ? WHERE orderId = ?", [
+      snapResponse.token,
+      snapResponse.redirect_url,
+      orderId
+    ]);
     res.status(201).json({
       success: true,
       payment: { orderId, status: "PENDING" },
@@ -595,8 +659,14 @@ app.post("/api/payments/create", async (req, res) => {
       redirectUrl: snapResponse.redirect_url
     });
   } catch (error) {
-    if (error.response && error.response.status) {
-      return res.status(error.response.status).json({ error: error.message || "Gagal membuat transaksi pembayaran." });
+    // Hapus baris PENDING yang gagal dibuat di Midtrans agar tidak jadi sampah
+    try {
+      await db.execute("DELETE FROM payments WHERE orderId = ? AND status = 'PENDING' AND snap_token IS NULL", [orderId]);
+    } catch (_) { /* abaikan */ }
+    if (error.httpStatusCode) {
+      return res.status(Number(error.httpStatusCode) === 401 || Number(error.httpStatusCode) === 403 ? 502 : 400).json({
+        error: error.message || "Gagal membuat transaksi pembayaran."
+      });
     }
     console.error(error);
     res.status(500).json({ error: "Gagal membuat transaksi pembayaran." });
@@ -611,23 +681,30 @@ app.get("/api/payments/:orderId/status", async (req, res) => {
       return res.status(404).json({ error: "Transaksi tidak ditemukan." });
     }
 
+    // IDOR guard: hanya pemilik transaksi (atau admin) yang boleh melihat status
+    if (rows.email !== req.user.email && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Akses ditolak. Anda tidak memiliki izin untuk melihat transaksi ini." });
+    }
+
     // Sinkronkan status langsung ke Midtrans bila pembayaran belum final.
     // Ini memastikan status PAID terdeteksi otomatis tanpa bergantung webhook dashboard.
-    if (rows.status === "PENDING") {
+    if (rows.status === "PENDING" || rows.status === "REJECTED") {
       try {
         const mt = await snap.transaction.status(req.params.orderId);
         let newStatus = rows.status;
         if (mt.transaction_status === "capture" || mt.transaction_status === "settlement") {
-          newStatus = "PAID";
-        } else if (["deny", "cancel", "expire"].includes(mt.transaction_status)) {
+          if (mt.fraud_status !== "challenge" && mt.fraud_status !== "deny") {
+            newStatus = "PAID";
+          }
+        } else if (["deny", "cancel", "expire", "refund", "chargeback"].includes(mt.transaction_status)) {
           newStatus = "REJECTED";
         }
         if (newStatus !== rows.status) {
-          await db.execute(
-            "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ?",
+          const update = await db.execute(
+            "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
             [newStatus, newStatus === "PAID" ? new Date() : null, req.params.orderId]
           );
-          if (newStatus === "PAID" && rows.event_id) {
+          if (newStatus === "PAID" && update.affectedRows > 0 && rows.event_id) {
             await db.execute(
               "UPDATE events SET sold = sold + ? WHERE id = ?",
               [rows.ticket_qty || 1, rows.event_id]
@@ -661,19 +738,28 @@ app.post("/api/payments/:orderId/verify", requireRole("admin"), async (req, res)
       return res.status(404).json({ error: "Transaksi pembayaran tidak ditemukan." });
     }
 
+    // Atomic: hanya transisi yang benar-benar mengubah status yang diterapkan
     const updatedAt = status === "PAID" ? new Date() : null;
     const result = await db.execute(
-      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ?",
+      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
       [status, updatedAt, orderId]
     );
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: "Transaksi pembayaran tidak ditemukan." });
+      // Tidak ada perubahan (sudah PAID, atau status sama)
+      const [fresh] = await db.query("SELECT * FROM payments WHERE orderId = ?", [orderId]);
+      return res.json({ success: true, unchanged: true, payment: fresh });
     }
 
     // Jika diverifikasi PAID manual (tanpa webhook), tambahkan stok terjual event
-    if (status === "PAID" && existing.status !== "PAID" && existing.event_id) {
+    if (status === "PAID" && existing.event_id) {
       await db.execute(
         "UPDATE events SET sold = sold + ? WHERE id = ?",
+        [existing.ticket_qty || 1, existing.event_id]
+      );
+    } else if (status === "REJECTED" && existing.status === "PAID" && existing.event_id) {
+      // PAID -> REJECTED: kembalikan stok yang terlanjur bertambah
+      await db.execute(
+        "UPDATE events SET sold = GREATEST(sold - ?, 0) WHERE id = ?",
         [existing.ticket_qty || 1, existing.event_id]
       );
     }
@@ -692,10 +778,18 @@ app.get("/", (req, res) => {
   res.send("Electric Pulse Console Backend API is running successfully!");
 });
 
+// 404 untuk route API yang tidak dikenal (JSON, bukan HTML)
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Endpoint tidak ditemukan." });
+});
+
 // Global error handler (harus sebelum app.listen)
 app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({ error: "Internal Server Error" });
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) {
+    console.error("Unhandled error:", err);
+  }
+  res.status(status).json({ error: status >= 500 ? "Internal Server Error" : (err.message || "Bad Request") });
 });
 
 // Jangan biarkan uncaught exception/unhandled rejection menghentikan server
