@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const db = require("./db");
 const { snap, serverKey } = require("./midtrans");
+const { sendOtpEmail, sendResetLinkEmail, isSmtpConfigured } = require("./mailer");
 const {
   generateToken,
   authenticateToken,
@@ -52,55 +53,123 @@ const logActivity = async (userName, actionType, description) => {
 
 // ============ PUBLIC ROUTES (tanpa autentikasi) ============
 
-// 1. Authentication
-app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email dan password wajib diisi." });
+// ---------- Helper OTP ----------
+const OTP_TTL_MS = 5 * 60 * 1000; // 5 menit
+const OTP_COOLDOWN_MS = 60 * 1000; // 1 menit antar kirim
+const OTP_MAX_ATTEMPTS = 5;
+
+const generateOtpCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+const invalidateOtps = async (email, purpose) => {
+  await db.execute("DELETE FROM otps WHERE email = ? AND purpose = ?", [email, purpose]);
+};
+
+// Ambil OTP terbaru yang masih berlaku untuk email + tujuan
+const getLatestOtp = async (email, purpose) => {
+  const rows = await db.query(
+    "SELECT * FROM otps WHERE email = ? AND purpose = ? ORDER BY id DESC LIMIT 1",
+    [email, purpose]
+  );
+  return rows[0] || null;
+};
+
+// Kirim OTP. Kembalikan { ok, code, devMode } — devMode true jika SMTP belum dikonfigurasi.
+const issueOtp = async (email, purpose) => {
+  const latest = await getLatestOtp(email, purpose);
+  if (latest) {
+    const created = new Date(latest.createdAt).getTime();
+    if (Date.now() - created < OTP_COOLDOWN_MS) {
+      const sisa = Math.ceil((OTP_COOLDOWN_MS - (Date.now() - created)) / 1000);
+      return { ok: false, cooldown: sisa };
+    }
+    await invalidateOtps(email, purpose);
+  }
+
+  const code = generateOtpCode();
+  await db.execute(
+    "INSERT INTO otps (email, code, purpose, expiresAt) VALUES (?, ?, ?, ?)",
+    [email, code, purpose, new Date(Date.now() + OTP_TTL_MS)]
+  );
+
+  const sent = await sendOtpEmail(email, code, purpose);
+  return { ok: true, code: sent ? null : code, devMode: !sent };
+};
+
+// 2. OTP
+app.post("/api/auth/send-otp", async (req, res) => {
+  const { email, purpose } = req.body;
+  if (!email || !["register", "reset"].includes(purpose)) {
+    return res.status(400).json({ error: "Email dan tujuan OTP (register/reset) wajib diisi." });
+  }
+  const normalizedEmail = String(email).toLowerCase().trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: "Format email tidak valid." });
   }
 
   try {
-    const users = await db.query("SELECT id, name, email, passwordHash, role FROM users WHERE email = ?", [email]);
-    if (!users.length) {
-      return res.status(401).json({ error: "Email atau Password salah." });
+    const existing = await db.query("SELECT id FROM users WHERE email = ?", [normalizedEmail]);
+    if (purpose === "register" && existing.length > 0) {
+      return res.status(400).json({ error: "Email sudah terdaftar." });
+    }
+    if (purpose === "reset" && existing.length === 0) {
+      return res.status(400).json({ error: "Email tidak terdaftar di sistem." });
     }
 
-    const user = users[0];
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordMatches) {
-      return res.status(401).json({ error: "Email atau Password salah." });
+    const result = await issueOtp(normalizedEmail, purpose);
+    if (!result.ok) {
+      return res.status(429).json({ error: `Tunggu ${result.cooldown} detik sebelum mengirim ulang OTP.` });
     }
 
-    const role = normalizeRole(user.role);
-    const token = generateToken({ id: user.id, name: user.name, email: user.email, role });
     return res.json({
       success: true,
-      message: "Login successful.",
-      user: { id: user.id, name: user.name, email: user.email, role },
-      token
+      message: result.devMode
+        ? "Mode demo: SMTP belum dikonfigurasi, kode OTP ditampilkan di bawah."
+        : "Kode OTP telah dikirim ke email Anda. Berlaku 5 menit.",
+      devMode: result.devMode,
+      devOtp: result.code
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: "Gagal memproses login." });
+    return res.status(500).json({ error: "Gagal mengirim OTP." });
   }
 });
 
 app.post("/api/auth/register", async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, otp } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: "Nama, email, dan password wajib diisi." });
   }
+  if (!otp) {
+    return res.status(400).json({ error: "Kode OTP wajib diisi." });
+  }
 
   try {
-    const existing = await db.query("SELECT id FROM users WHERE email = ?", [email]);
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const existing = await db.query("SELECT id FROM users WHERE email = ?", [normalizedEmail]);
     if (existing && existing.length > 0) {
       return res.status(400).json({ error: "Email sudah terdaftar." });
     }
 
+    // Verifikasi OTP
+    const otpRow = await getLatestOtp(normalizedEmail, "register");
+    if (!otpRow || new Date(otpRow.expiresAt).getTime() < Date.now()) {
+      return res.status(400).json({ error: "OTP tidak valid atau sudah kedaluwarsa. Kirim ulang OTP." });
+    }
+    if (otpRow.attempts >= OTP_MAX_ATTEMPTS) {
+      await invalidateOtps(normalizedEmail, "register");
+      return res.status(400).json({ error: "Terlalu banyak percobaan OTP. Kirim ulang kode baru." });
+    }
+    if (String(otp).trim() !== otpRow.code) {
+      await db.execute("UPDATE otps SET attempts = attempts + 1 WHERE id = ?", [otpRow.id]);
+      const sisa = OTP_MAX_ATTEMPTS - otpRow.attempts - 1;
+      return res.status(400).json({ error: `Kode OTP salah. Sisa ${Math.max(sisa, 0)} percobaan.` });
+    }
+    await invalidateOtps(normalizedEmail, "register");
+
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await db.execute(
       "INSERT INTO users (name, email, passwordHash, role) VALUES (?, ?, ?, 'user')",
-      [name, email, passwordHash]
+      [name, normalizedEmail, passwordHash]
     );
 
     const token = generateToken({ id: result.insertId, name, email, role: "user" });
@@ -113,6 +182,84 @@ app.post("/api/auth/register", async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Gagal memproses registrasi." });
+  }
+});
+
+// Reset password via tautan: kirim link ke email (bukan kode OTP)
+const RESET_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 menit
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: "Email wajib diisi." });
+  }
+  const normalizedEmail = String(email).toLowerCase().trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: "Format email tidak valid." });
+  }
+
+  try {
+    const existing = await db.query("SELECT id FROM users WHERE email = ?", [normalizedEmail]);
+    if (existing.length === 0) {
+      return res.status(400).json({ error: "Email tidak terdaftar di sistem." });
+    }
+
+    const token = require("crypto").randomBytes(32).toString("hex");
+    await db.execute("DELETE FROM reset_tokens WHERE email = ?", [normalizedEmail]);
+    await db.execute(
+      "INSERT INTO reset_tokens (email, token, expiresAt) VALUES (?, ?, ?)",
+      [normalizedEmail, token, new Date(Date.now() + RESET_TOKEN_TTL_MS)]
+    );
+
+    const appUrl = String(process.env.APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+    const resetUrl = `${appUrl}/reset-password?token=${token}`;
+    const sent = await sendResetLinkEmail(normalizedEmail, resetUrl);
+
+    // Jangan ungkap ke client apakah email terdaftar/terkirim detail — cukup pesan netral
+    return res.json({
+      success: true,
+      message: sent
+        ? "Tautan reset password telah dikirim ke email Anda. Berlaku 15 menit."
+        : "Mode demo: SMTP belum dikonfigurasi. (Tautan tidak terkirim)",
+      devMode: !sent,
+      devUrl: sent ? null : resetUrl
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Gagal memproses permintaan reset password." });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: "Token dan password baru wajib diisi." });
+  }
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: "Password baru minimal 6 karakter." });
+  }
+
+  try {
+    const [row] = await db.query(
+      "SELECT * FROM reset_tokens WHERE token = ? AND used = 0 ORDER BY id DESC LIMIT 1",
+      [String(token).trim()]
+    );
+    if (!row || new Date(row.expiresAt).getTime() < Date.now()) {
+      return res.status(400).json({ error: "Tautan reset tidak valid atau sudah kedaluwarsa. Kirim ulang permintaan reset." });
+    }
+    const [user] = await db.query("SELECT id FROM users WHERE email = ?", [row.email]);
+    if (!user) {
+      return res.status(400).json({ error: "Akun tidak ditemukan." });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.execute("UPDATE users SET passwordHash = ? WHERE id = ?", [passwordHash, user.id]);
+    await db.execute("UPDATE reset_tokens SET used = 1 WHERE id = ?", [row.id]);
+
+    return res.json({ success: true, message: "Password berhasil direset. Silakan login dengan password baru." });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Gagal mereset password." });
   }
 });
 

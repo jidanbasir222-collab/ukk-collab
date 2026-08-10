@@ -158,6 +158,30 @@ const initSchema = async () => {
     )
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS otps (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      email VARCHAR(100) NOT NULL,
+      code VARCHAR(6) NOT NULL,
+      purpose ENUM('register', 'reset') NOT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      expiresAt TIMESTAMP NOT NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS reset_tokens (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      email VARCHAR(100) NOT NULL,
+      token VARCHAR(64) NOT NULL,
+      used TINYINT(1) NOT NULL DEFAULT 0,
+      expiresAt TIMESTAMP NOT NULL,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_token (token)
+    )
+  `);
+
   console.info("Skema tabel siap (auto-create).");
 
   // Migrasi ringan: pastikan kolom phone ada di tabel users (DB lama pakai snake_case)

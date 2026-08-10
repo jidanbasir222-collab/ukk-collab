@@ -7,24 +7,50 @@ import { useAuth } from "../AuthContext";
 import { COLORS } from "../theme";
 
 export default function RegisterScreen({ navigation }) {
-  const { register } = useAuth();
+  const { register, sendOtp } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [devOtp, setDevOtp] = useState("");
+  const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleRegister = async () => {
+  const handleSendOtp = async () => {
     if (!name || !email || !password) {
-      Alert.alert("Gagal", "Nama, email, dan password wajib diisi.");
+      Alert.alert("Gagal", "Nama, email, dan password wajib diisi terlebih dahulu.");
       return;
     }
     if (password.length < 6) {
       Alert.alert("Gagal", "Password minimal 6 karakter.");
       return;
     }
+    setSending(true);
+    try {
+      const data = await sendOtp(email, "register");
+      setOtpSent(true);
+      if (data.devMode && data.devOtp) {
+        setDevOtp(data.devOtp);
+        Alert.alert("Mode Demo", `SMTP belum dikonfigurasi. Kode OTP Anda: ${data.devOtp}`);
+      } else {
+        Alert.alert("OTP Terkirim", data.message || "Kode OTP telah dikirim ke email Anda.");
+      }
+    } catch (e) {
+      Alert.alert("Gagal", e.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!otp) {
+      Alert.alert("Gagal", "Masukkan kode OTP yang Anda terima.");
+      return;
+    }
     setLoading(true);
     try {
-      await register(name, email, password);
+      await register(name, email, password, otp);
       Alert.alert("Berhasil", "Registrasi berhasil. Selamat datang!");
     } catch (e) {
       Alert.alert("Registrasi Gagal", e.message);
@@ -43,21 +69,43 @@ export default function RegisterScreen({ navigation }) {
           </View>
 
           <Text style={styles.label}>Full Name</Text>
-          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Nama lengkap" placeholderTextColor={COLORS.textMuted} />
+          <TextInput style={[styles.input, otpSent && styles.inputDisabled]} value={name} onChangeText={setName} placeholder="Nama lengkap" placeholderTextColor={COLORS.textMuted} editable={!otpSent} />
 
           <Text style={styles.label}>Email</Text>
           <TextInput
-            style={styles.input} value={email} onChangeText={setEmail}
+            style={[styles.input, otpSent && styles.inputDisabled]} value={email} onChangeText={setEmail}
             placeholder="you@example.com" placeholderTextColor={COLORS.textMuted}
-            keyboardType="email-address" autoCapitalize="none"
+            keyboardType="email-address" autoCapitalize="none" editable={!otpSent}
           />
 
           <Text style={styles.label}>Password</Text>
-          <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder="Minimal 6 karakter" placeholderTextColor={COLORS.textMuted} secureTextEntry />
+          <TextInput style={[styles.input, otpSent && styles.inputDisabled]} value={password} onChangeText={setPassword} placeholder="Minimal 6 karakter" placeholderTextColor={COLORS.textMuted} secureTextEntry editable={!otpSent} />
 
-          <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Daftar Sekarang</Text>}
-          </TouchableOpacity>
+          {otpSent && (
+            <>
+              <Text style={styles.label}>Kode OTP</Text>
+              <TextInput
+                style={styles.input} value={otp} onChangeText={(t) => setOtp(t.replace(/\D/g, ""))}
+                placeholder="6 digit kode" placeholderTextColor={COLORS.textMuted}
+                keyboardType="number-pad" maxLength={6}
+              />
+            </>
+          )}
+
+          {!otpSent ? (
+            <TouchableOpacity style={styles.button} onPress={handleSendOtp} disabled={sending}>
+              {sending ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Kirim Kode OTP</Text>}
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.button} onPress={handleRegister} disabled={loading}>
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Verifikasi & Daftar</Text>}
+              </TouchableOpacity>
+              <TouchableOpacity style={{ marginTop: 12, alignItems: "center" }} onPress={handleSendOtp} disabled={sending}>
+                <Text style={styles.link}>{sending ? "Mengirim ulang..." : "Kirim ulang kode OTP"}</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           <TouchableOpacity style={{ marginTop: 16, alignItems: "center" }} onPress={() => navigation.goBack()}>
             <Text style={styles.link}>Sudah punya akun? Masuk</Text>
@@ -82,6 +130,7 @@ const styles = {
     color: COLORS.text,
     fontSize: 14
   },
+  inputDisabled: { opacity: 0.5 },
   button: { backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 15, alignItems: "center", marginTop: 24 },
   buttonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
   link: { color: COLORS.textMuted, fontSize: 13, textDecorationLine: "underline" }

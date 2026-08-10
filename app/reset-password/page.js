@@ -1,18 +1,79 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Mail, ArrowRight, ArrowLeft, Zap, Shield, Info } from "lucide-react";
+import { Mail, ArrowRight, ArrowLeft, Zap, Shield, Info, Lock, KeyRound, CheckCircle2 } from "lucide-react";
 
-export default function ResetPasswordPage() {
-  const [email, setEmail] = useState("admin@electricpulse.com");
+function ResetPasswordContent() {
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
+
+  const [email, setEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [devUrl, setDevUrl] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
+
+  // Mode 1: minta tautan reset
+  const sendResetLink = async (e) => {
     e.preventDefault();
     if (!email) return;
+    setError("");
+    setMessage("");
+    setDevUrl("");
     setLoading(true);
-    setTimeout(() => setLoading(false), 1000);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || data.message || "Gagal mengirim tautan reset");
+        return;
+      }
+      setMessage(data.message || "Tautan reset password telah dikirim ke email Anda.");
+      if (data.devMode && data.devUrl) setDevUrl(data.devUrl);
+    } catch (err) {
+      setError("Terjadi kesalahan jaringan.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Mode 2: set password baru dari tautan
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess(false);
+    if (!newPassword) {
+      setError("Isi password baru Anda.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || data.message || "Gagal mereset password");
+        return;
+      }
+      setSuccess(true);
+    } catch (err) {
+      setError("Terjadi kesalahan jaringan.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -34,60 +95,143 @@ export default function ResetPasswordPage() {
 
         {/* Form Card */}
         <div className="w-full bg-[#141419]/90 border border-[#26262f] rounded-3xl p-8 glow-card backdrop-blur-md transition-all duration-300 hover:border-[#ff3b70]/20">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-            <div className="text-center space-y-2">
-              <h2 className="text-xl font-bold text-white tracking-wide">Reset Password</h2>
+          {success ? (
+            <div className="flex flex-col items-center gap-4 py-4 text-center">
+              <CheckCircle2 className="w-14 h-14 text-emerald-400" />
+              <h2 className="text-xl font-bold text-white tracking-wide">Password Berhasil Direset</h2>
               <p className="text-xs text-[#8b8b9a] leading-relaxed">
-                Masukkan email admin Anda. Kami akan mengirimkan tautan pemulihan jika email terdaftar.
+                Password akun Anda telah diperbarui. Silakan masuk dengan password baru.
               </p>
-            </div>
-
-            {/* Email Input Field */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Work Email</label>
-              <div className="relative">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@company.com"
-                  className="w-full bg-[#18181f] border border-[#26262f] rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/50 transition-all font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              <span>{loading ? "Mengirim..." : "Kirim Tautan Pemulihan"}</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-
-            {/* Honest notice */}
-            <div className="flex items-start gap-2.5 bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3">
-              <Info className="w-4 h-4 text-[#ff3b70] shrink-0 mt-0.5" />
-              <p className="text-[11px] leading-relaxed text-[#8b8b9a]">
-                Versi demo ini belum terhubung ke layanan email sungguhan, jadi tautan tidak benar-benar
-                terkirim. Untuk bantuan reset kata sandi, hubungi administrator proyek langsung.
-              </p>
-            </div>
-
-            {/* Back to Login Link */}
-            <div className="flex justify-center mt-2">
               <Link
                 href="/login"
-                className="inline-flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] hover:text-white transition-colors"
+                className="mt-2 w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2"
               >
-                <ArrowLeft className="w-3.5 h-3.5" />
+                <ArrowRight className="w-4 h-4" />
                 <span>Kembali ke Login</span>
               </Link>
             </div>
-          </form>
+          ) : token ? (
+            <form onSubmit={handleReset} className="flex flex-col gap-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-bold text-white tracking-wide">Buat Password Baru</h2>
+                <p className="text-xs text-[#8b8b9a] leading-relaxed">
+                  Masukkan password baru untuk akun Anda.
+                </p>
+              </div>
+
+              {error && (
+                <div className="bg-[#ff3b70]/10 border border-[#ff3b70]/30 text-[#ff3b70] text-xs px-4 py-3 rounded-xl flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Password Baru</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Minimal 6 karakter"
+                    className="w-full bg-[#18181f] border border-[#26262f] rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/50 transition-all font-mono"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <span>{loading ? "Memproses..." : "Reset Password"}</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex justify-center mt-2">
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] hover:text-white transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Kembali ke Login</span>
+                </Link>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={sendResetLink} className="flex flex-col gap-6">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-bold text-white tracking-wide">Reset Password</h2>
+                <p className="text-xs text-[#8b8b9a] leading-relaxed">
+                  Masukkan email Anda. Kami akan mengirimkan tautan reset password ke email Anda.
+                </p>
+              </div>
+
+              {error && (
+                <div className="bg-[#ff3b70]/10 border border-[#ff3b70]/30 text-[#ff3b70] text-xs px-4 py-3 rounded-xl flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+              {message && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs px-4 py-3 rounded-xl flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>{message}</span>
+                </div>
+              )}
+              {devUrl && (
+                <div className="bg-[#8b5cf6]/10 border border-[#8b5cf6]/30 text-[#c4b5fd] text-xs px-4 py-3 rounded-xl">
+                  <span className="font-bold">Mode demo (SMTP belum dikonfigurasi):</span>
+                  <a href={devUrl} className="block font-mono text-[11px] underline break-all mt-1">{devUrl}</a>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full bg-[#18181f] border border-[#26262f] rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/50 transition-all font-mono"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 rounded-xl text-white font-semibold text-sm gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <span>{loading ? "Mengirim..." : "Kirim Tautan Reset"}</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-start gap-2.5 bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3">
+                <Info className="w-4 h-4 text-[#ff3b70] shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-relaxed text-[#8b8b9a]">
+                  Tautan berlaku selama 15 menit dan hanya bisa digunakan sekali. Jika tidak menerima email,
+                  periksa folder spam atau kirim ulang.
+                </p>
+              </div>
+
+              <div className="flex justify-center mt-2">
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] hover:text-white transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Kembali ke Login</span>
+                </Link>
+              </div>
+            </form>
+          )}
         </div>
 
         {/* Secure Environment Notice */}
@@ -97,5 +241,13 @@ export default function ResetPasswordPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordContent />
+    </Suspense>
   );
 }
