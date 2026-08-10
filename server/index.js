@@ -796,18 +796,24 @@ app.post("/api/payments/create", async (req, res) => {
       return res.status(400).json({ error: `Jumlah pembayaran tidak valid. Minimal Rp ${minimumTotal.toLocaleString("id-ID")}.` });
     }
 
+    // Hitung ulang total + pajak 10% server-side agar konsisten dengan item_details di Midtrans.
+    // Tanpa ini Midtrans menolak: gross_amount != sum(item_details) -> HTTP 400.
+    const baseAmount = Number(ev.ticketPrice) * qty;
+    const taxAmount = Math.round(baseAmount * 0.1 * 100) / 100;
+    const grossAmount = Math.round((baseAmount + taxAmount) * 100) / 100;
+
     const orderIdValue = `EP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
     orderId = orderIdValue;
 
     const result = await db.execute(
       "INSERT INTO payments (orderId, user_name, email, event_id, ticket_qty, totalBayar, status) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')",
-      [orderId, user, email, eventId, qty, Number(totalBayar)]
+      [orderId, user, email, eventId, qty, grossAmount]
     );
 
     const parameter = {
       transaction_details: {
         order_id: orderId,
-        gross_amount: Number(totalBayar)
+        gross_amount: grossAmount
       },
       item_details: [
         {
@@ -815,6 +821,12 @@ app.post("/api/payments/create", async (req, res) => {
           price: Number(ev.ticketPrice),
           quantity: qty,
           name: `Tiket ${ev.name}`
+        },
+        {
+          id: `tax-${eventId}`,
+          price: taxAmount,
+          quantity: 1,
+          name: "Taxes & Fees (10%)"
         }
       ],
       customer_details: {
