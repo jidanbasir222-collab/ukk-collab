@@ -606,10 +606,40 @@ app.post("/api/payments/create", async (req, res) => {
 // Poll payment status from frontend after Snap popup
 app.get("/api/payments/:orderId/status", async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT orderId, status FROM payments WHERE orderId = ?", [req.params.orderId]);
+    const [rows] = await db.query("SELECT * FROM payments WHERE orderId = ?", [req.params.orderId]);
     if (!rows) {
       return res.status(404).json({ error: "Transaksi tidak ditemukan." });
     }
+
+    // Sinkronkan status langsung ke Midtrans bila pembayaran belum final.
+    // Ini memastikan status PAID terdeteksi otomatis tanpa bergantung webhook dashboard.
+    if (rows.status === "PENDING") {
+      try {
+        const mt = await snap.transaction.status(req.params.orderId);
+        let newStatus = rows.status;
+        if (mt.transaction_status === "capture" || mt.transaction_status === "settlement") {
+          newStatus = "PAID";
+        } else if (["deny", "cancel", "expire"].includes(mt.transaction_status)) {
+          newStatus = "REJECTED";
+        }
+        if (newStatus !== rows.status) {
+          await db.execute(
+            "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ?",
+            [newStatus, newStatus === "PAID" ? new Date() : null, req.params.orderId]
+          );
+          if (newStatus === "PAID" && rows.event_id) {
+            await db.execute(
+              "UPDATE events SET sold = sold + ? WHERE id = ?",
+              [rows.ticket_qty || 1, rows.event_id]
+            );
+          }
+          rows.status = newStatus;
+        }
+      } catch (err) {
+        console.warn(`Gagal sinkron status Midtrans untuk ${req.params.orderId}:`, err.message || err);
+      }
+    }
+
     res.json({ success: true, orderId: rows.orderId, status: rows.status });
   } catch (error) {
     console.error(error);

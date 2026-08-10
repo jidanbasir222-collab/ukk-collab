@@ -182,8 +182,6 @@ function UserConsoleContent() {
   // Modals
   const [activeAccessTicket, setActiveAccessTicket] = useState(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [showQrisModal, setShowQrisModal] = useState(false);
-  const [currentOrderId, setCurrentOrderId] = useState(null);
   const [latestOrderInfo, setLatestOrderInfo] = useState(null);
 
   // Initialize
@@ -312,15 +310,22 @@ function UserConsoleContent() {
 
   // Load Midtrans Snap.js script dynamically
   const loadSnapScript = () => {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (window.snap) {
         return resolve();
       }
+      const clientKey = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY;
+      if (!clientKey) {
+        return reject(new Error("Client key Midtrans belum diatur. Isi NEXT_PUBLIC_MIDTRANS_CLIENT_KEY di .env.local."));
+      }
+      const isSnapProduction = process.env.NEXT_PUBLIC_MIDTRANS_IS_PRODUCTION === "true";
       const script = document.createElement("script");
-      script.src = "https://app.sandbox.midtrans.com/snap/snap.js";
-      script.setAttribute("data-client-key", process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY || "Mid-client-n8qxK7pwzW4Y6eEm");
+      script.src = isSnapProduction
+        ? "https://app.midtrans.com/snap/snap.js"
+        : "https://app.sandbox.midtrans.com/snap/snap.js";
+      script.setAttribute("data-client-key", clientKey);
       script.onload = () => resolve();
-      script.onerror = () => resolve();
+      script.onerror = () => reject(new Error("Gagal memuat snap.js Midtrans."));
       document.body.appendChild(script);
     });
   };
@@ -352,13 +357,6 @@ function UserConsoleContent() {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Gagal membuat transaksi pembayaran.");
-      }
-
-      if (paymentMethod === "ewallet") {
-        setIsPaying(false);
-        setCurrentOrderId(data.payment?.orderId || `EP-${Date.now()}`);
-        setShowQrisModal(true);
-        return;
       }
 
       await loadSnapScript();
@@ -1876,57 +1874,6 @@ function UserConsoleContent() {
             <div className="space-y-1">
               <p className="text-xs text-white font-bold leading-relaxed">{activeAccessTicket.venue}</p>
               <p className="text-[10px] text-[#8b8b9a] leading-none">{activeAccessTicket.date}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== QRIS MODAL ==================== */}
-      {showQrisModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowQrisModal(false)} />
-          <div className={`relative w-full max-w-sm rounded-2xl p-6 shadow-2xl border ${theme === "dark" ? "bg-[#18181f] border-[#26262f] text-white" : "bg-white border-[#e5e7eb] text-[#18181f]"}`}>
-            <button
-              onClick={() => setShowQrisModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-black/10 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <div className="text-center space-y-4">
-              <h2 className="text-lg font-bold">Pembayaran QRIS</h2>
-              <p className="text-xs text-[#8b8b9a]">Order ID: #{currentOrderId}</p>
-              <div className="bg-white p-4 rounded-xl inline-block mx-auto border border-gray-200">
-                <img src="/qris.jpeg" alt="QRIS" className="w-64 h-auto rounded-lg" />
-              </div>
-              <p className="text-sm font-semibold mt-4">Total: {formatIDR(total)}</p>
-              <p className="text-[10px] text-[#8b8b9a]">Silakan scan QRIS di atas menggunakan aplikasi E-Wallet pilihan Anda (GoPay, OVO, Dana, dll).</p>
-              <button
-                onClick={() => {
-                  setShowQrisModal(false);
-                  const ev = selectedEvent;
-                  const newTicket = {
-                    id: `T${userTickets.length + 1}`,
-                    event: ev ? ev.name : "Neon Night Tour 2024",
-                    tier: `${ev ? ev.category || "General" : "General"} x${ticketQuantity}`,
-                    date: ev ? new Date(ev.date).toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase() : "DEC 15",
-                    venue: ev ? ev.location : "The Zenith Arena, London",
-                    code: currentOrderId,
-                    image: (ev && (ev.poster || ev.banner)) || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
-                    status: "Active"
-                  };
-                  setUserTickets([newTicket, ...userTickets]);
-                  setLatestOrderInfo({
-                    orderId: currentOrderId,
-                    items: `${ticketQuantity}x ${selectedEvent ? selectedEvent.name : "General"}`,
-                    total: formatIDR(total)
-                  });
-                  setShowSuccessModal(true);
-                  setTimeLeft(284);
-                }}
-                className="w-full mt-6 py-3 rounded-xl bg-[#ff3b70] text-white text-xs font-bold hover:bg-[#ff3b70]/90 transition-colors shadow-lg shadow-[#ff3b70]/20"
-              >
-                Konfirmasi Pembayaran
-              </button>
             </div>
           </div>
         </div>

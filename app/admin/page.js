@@ -46,6 +46,17 @@ import Instagram from "../../components/Instagram";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
 
+const NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "event", label: "Event", icon: Calendar },
+  { id: "artis", label: "Artis", icon: Users },
+  { id: "kategori", label: "Kategori", icon: FolderKanban },
+  { id: "pembayaran", label: "Riwayat Pembayaran Tiket", icon: CreditCard },
+  { id: "laporan", label: "Laporan", icon: BarChart3 },
+  { id: "profil", label: "Profil", icon: User },
+  { id: "pengaturan", label: "Pengaturan", icon: Settings }
+];
+
 const DEFAULT_PAYMENTS = [
   {
     orderId: "#VB-882810",
@@ -885,8 +896,8 @@ export default function Home() {
         </div>
       )}
 
-      {/* 1. SIDEBAR CONTAINER */}
-      <aside className="w-[260px] bg-[#0d0d10] border-r border-[#26262f] flex flex-col justify-between shrink-0">
+      {/* 1. SIDEBAR CONTAINER (hidden on mobile, visible on md+) */}
+      <aside className="hidden md:flex w-[260px] bg-[#0d0d10] border-r border-[#26262f] flex-col justify-between shrink-0">
         
         {/* Upper portion */}
         <div>
@@ -903,16 +914,7 @@ export default function Home() {
 
           {/* Menu Items */}
           <nav className="p-4 flex flex-col gap-1.5 mt-2">
-            {[
-              { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-              { id: "event", label: "Event", icon: Calendar },
-              { id: "artis", label: "Artis", icon: Users },
-              { id: "kategori", label: "Kategori", icon: FolderKanban },
-              { id: "pembayaran", label: "Riwayat Pembayaran Tiket", icon: CreditCard },
-              { id: "laporan", label: "Laporan", icon: BarChart3 },
-              { id: "profil", label: "Profil", icon: User },
-              { id: "pengaturan", label: "Pengaturan", icon: Settings }
-            ].map((item) => {
+            {NAV_ITEMS.map((item) => {
               const IconComp = item.icon;
               const isActive = activeTab === item.id;
               return (
@@ -985,10 +987,10 @@ export default function Home() {
         <div className="absolute top-0 right-[15%] w-[400px] h-[400px] bg-[#ff3b70]/[0.02] rounded-full blur-[100px] pointer-events-none" />
 
         {/* TOP HEADER */}
-        <header className="h-[75px] border-b border-[#26262f]/45 px-8 flex items-center justify-between shrink-0 bg-[#09090b]/80 backdrop-blur-md sticky top-0 z-30">
+        <header className="h-[75px] border-b border-[#26262f]/45 px-4 md:px-8 flex items-center justify-between gap-3 shrink-0 bg-[#09090b]/80 backdrop-blur-md sticky top-0 z-30">
           
           {/* Search bar */}
-          <div className="relative w-full max-w-[400px]">
+          <div className="relative flex-1 min-w-0 max-w-[400px]">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
             <input
               type="text"
@@ -1026,20 +1028,47 @@ export default function Home() {
             </button>
 
             {/* Divider */}
-            <div className="h-6 w-px bg-[#26262f]" />
+            <div className="hidden sm:block h-6 w-px bg-[#26262f]" />
 
             {/* Logout Button */}
             <button
               onClick={handleLogout}
-              className="px-4 py-2 rounded-xl text-xs font-semibold border border-[#26262f] hover:border-[#ff3b70]/30 hover:bg-[#ff3b70]/5 text-[#f4f4f5] transition-all cursor-pointer"
+              className="px-2.5 sm:px-4 py-2 rounded-xl text-xs font-semibold border border-[#26262f] hover:border-[#ff3b70]/30 hover:bg-[#ff3b70]/5 text-[#f4f4f5] transition-all cursor-pointer flex items-center gap-1.5"
             >
-              Logout
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </header>
 
+        {/* MOBILE NAV BAR (visible on mobile only) */}
+        <nav className="md:hidden flex items-center gap-2 overflow-x-auto px-4 py-3 border-b border-[#26262f]/45 bg-[#0d0d10]/80 backdrop-blur-md sticky top-[75px] z-20 shrink-0">
+          {NAV_ITEMS.map((item) => {
+            const IconComp = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (item.id === "event") setEventSubView("list");
+                  if (item.id === "artis") setArtistSubView("grid");
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                  isActive
+                    ? "bg-gradient-to-r from-[#ff3b70] to-[#ff3b70]/80 text-white shadow-[0_4px_15px_rgba(255,59,112,0.25)] border border-[#ff3b70]/30"
+                    : "text-[#8b8b9a] hover:text-white hover:bg-[#181822] border border-[#26262f]"
+                }`}
+              >
+                <IconComp className="w-3.5 h-3.5" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
         {/* SCROLLABLE MAIN CONTENT AREA */}
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8">
 
           {/* ==================== A. DASHBOARD VIEW ==================== */}
           {activeTab === "dashboard" && (
