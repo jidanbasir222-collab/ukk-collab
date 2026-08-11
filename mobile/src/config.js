@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 
 // Deteksi IP LAN komputer dev dari Expo Go (mode LAN, bukan tunnel).
-// Fallback: localhost (untuk web/emulator) atau EXPO_PUBLIC_API_URL eksplisit.
+// Fallback: localhost (untuk web/emulator/tunnel) atau EXPO_PUBLIC_API_URL eksplisit.
 const isLanIp = (host) => {
   if (!host) return false;
   return (
@@ -22,7 +22,9 @@ const getApiBase = () => {
       return `http://${host}:5000`;
     }
   }
-  return "https://ideal-wonder-production-445e.up.railway.app";
+  // Non-LAN (tunnel/web/emulator): server dev lokal di port 5000.
+  // Gunakan EXPO_PUBLIC_API_URL untuk mengarahkan ke server production.
+  return "http://localhost:5000";
 };
 
 export const API_BASE = getApiBase();

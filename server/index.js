@@ -15,8 +15,34 @@ const {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-// CORS dipasang paling atas sebelum middleware lain & route, agar preflight selalu ter-handle
+// Pajak 10% — satu-satunya sumber kebenaran nominal pajak (nilai sama dengan preview web, lib/api.js).
+const TAX_RATE = 0.1;
+
+// Upload file (poster/banner event) — disimpan di server/uploads, disajikan via /uploads
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
+const uploadsDir = path.join(__dirname, "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadsDir),
+    filename: (req, file, cb) => {
+      const safeName = Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(file.originalname || "").toLowerCase();
+      cb(null, safeName);
+    }
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Hanya file gambar (JPEG/PNG/WebP/GIF) yang diizinkan."));
+    }
+  }
+});
+
+// Middleware// CORS dipasang paling atas sebelum middleware lain & route, agar preflight selalu ter-handle
 app.use(
   cors({
     origin: true, // mengizinkan origin mana pun yang melakukan request
@@ -37,10 +63,39 @@ app.options("*", (req, res) => {
 
 app.use(express.json({ limit: "10mb" }));
 
+// Sajikan file upload (poster/banner) secara statis
+app.use("/uploads", express.static(uploadsDir, { maxAge: "7d" }));
+
+// Rate limiting: mencegah brute-force password & banjir OTP
+const rateLimit = require("express-rate-limit");
+const loginRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Terlalu banyak percobaan login. Coba lagi dalam 15 menit." }
+});
+const otpRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Terlalu banyak permintaan OTP. Coba lagi dalam 15 menit." }
+});
+
+// Upload gambar (hanya admin) — kembalikan URL absolut yang bisa langsung dipakai sebagai poster/banner
+app.post("/api/upload", requireRole("admin"), upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "File gambar wajib diunggah." });
+  }
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  res.status(201).json({ success: true, url: `${baseUrl}/uploads/${req.file.filename}` });
+});
+
 // Helper: tulis activity log ke tabel activity_logs
 const logActivity = async (userName, actionType, description) => {
   try {
-    const allowed = ["PURCHASE", "ARTIST_REGISTER", "EVENT_APPROVED", "PAYMENT_VERIFIED"];
+    const allowed = ["PURCHASE", "ARTIST_REGISTER", "EVENT_APPROVED", "PAYMENT_VERIFIED", "PAYMENT_REJECTED"];
     const type = allowed.includes(actionType) ? actionType : "PURCHASE";
     await db.execute(
       "INSERT INTO activity_logs (user_name, action_type, description) VALUES (?, ?, ?)",
@@ -51,17 +106,52 @@ const logActivity = async (userName, actionType, description) => {
   }
 };
 
+// Reservasi stok ATOMIK: hanya berhasil bila kuota tersisa mencukupi.
+// Mencegah oversell saat dua pembelian terjadi bersamaan (race condition).
+const reserveStock = async (eventId, qty) => {
+  const result = await db.execute(
+    "UPDATE events SET sold = sold + ? WHERE id = ? AND status = 'ACTIVE' AND sold + ? <= quota",
+    [qty, eventId, qty]
+  );
+  return result.affectedRows > 0;
+};
+
+// Kembalikan stok saat pembayaran batal/refund/ditolak (satu kali per transisi)
+const releaseStock = async (eventId, qty) => {
+  await db.execute("UPDATE events SET sold = GREATEST(sold - ?, 0) WHERE id = ?", [qty, eventId]);
+};
+
 // ============ PUBLIC ROUTES (tanpa autentikasi) ============
+
+// Kode OTP/tautan reset hanya boleh "bocor" ke response di lingkungan non-produksi.
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 // ---------- Helper OTP ----------
 const OTP_TTL_MS = 5 * 60 * 1000; // 5 menit
 const OTP_COOLDOWN_MS = 60 * 1000; // 1 menit antar kirim
 const OTP_MAX_ATTEMPTS = 5;
 
-const generateOtpCode = () => String(Math.floor(100000 + Math.random() * 900000));
+const generateOtpCode = () => {
+  const crypto = require("crypto");
+  return String(crypto.randomInt(100000, 1000000));
+};
 
 const invalidateOtps = async (email, purpose) => {
   await db.execute("DELETE FROM otps WHERE email = ? AND purpose = ?", [email, purpose]);
+};
+
+// Lock in-memory per-email agar dua request send-otp paralel tidak lolos cooldown bersamaan
+const otpLocks = new Map();
+const withOtpLock = async (email, fn) => {
+  while (otpLocks.has(email)) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  otpLocks.set(email, true);
+  try {
+    return await fn();
+  } finally {
+    otpLocks.delete(email);
+  }
 };
 
 // Ambil OTP terbaru yang masih berlaku untuk email + tujuan
@@ -75,28 +165,30 @@ const getLatestOtp = async (email, purpose) => {
 
 // Kirim OTP. Kembalikan { ok, code, devMode } — devMode true jika SMTP belum dikonfigurasi.
 const issueOtp = async (email, purpose) => {
-  const latest = await getLatestOtp(email, purpose);
-  if (latest) {
-    const created = new Date(latest.createdAt).getTime();
-    if (Date.now() - created < OTP_COOLDOWN_MS) {
-      const sisa = Math.ceil((OTP_COOLDOWN_MS - (Date.now() - created)) / 1000);
-      return { ok: false, cooldown: sisa };
+  return withOtpLock(email, async () => {
+    const latest = await getLatestOtp(email, purpose);
+    if (latest) {
+      const created = new Date(latest.createdAt).getTime();
+      if (Date.now() - created < OTP_COOLDOWN_MS) {
+        const sisa = Math.ceil((OTP_COOLDOWN_MS - (Date.now() - created)) / 1000);
+        return { ok: false, cooldown: sisa };
+      }
+      await invalidateOtps(email, purpose);
     }
-    await invalidateOtps(email, purpose);
-  }
 
-  const code = generateOtpCode();
-  await db.execute(
-    "INSERT INTO otps (email, code, purpose, expiresAt) VALUES (?, ?, ?, ?)",
-    [email, code, purpose, new Date(Date.now() + OTP_TTL_MS)]
-  );
+    const code = generateOtpCode();
+    await db.execute(
+      "INSERT INTO otps (email, code, purpose, expiresAt) VALUES (?, ?, ?, ?)",
+      [email, code, purpose, new Date(Date.now() + OTP_TTL_MS)]
+    );
 
-  const sent = await sendOtpEmail(email, code, purpose);
-  return { ok: true, code: sent ? null : code, devMode: !sent };
+    const sent = await sendOtpEmail(email, code, purpose);
+    return { ok: true, code: sent ? null : code, devMode: !sent };
+  });
 };
 
 // 2. OTP
-app.post("/api/auth/send-otp", async (req, res) => {
+app.post("/api/auth/send-otp", otpRateLimit, async (req, res) => {
   const { email, purpose } = req.body;
   if (!email || !["register", "reset"].includes(purpose)) {
     return res.status(400).json({ error: "Email dan tujuan OTP (register/reset) wajib diisi." });
@@ -126,7 +218,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
         ? "Mode demo: SMTP belum dikonfigurasi, kode OTP ditampilkan di bawah."
         : "Kode OTP telah dikirim ke email Anda. Berlaku 5 menit.",
       devMode: result.devMode,
-      devOtp: result.code
+      devOtp: !IS_PRODUCTION && result.devMode ? result.code : undefined
     });
   } catch (error) {
     console.error(error);
@@ -138,6 +230,9 @@ app.post("/api/auth/register", async (req, res) => {
   const { name, email, password, otp } = req.body;
   if (!name || !email || !password) {
     return res.status(400).json({ error: "Nama, email, dan password wajib diisi." });
+  }
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: "Password minimal 6 karakter." });
   }
   if (!otp) {
     return res.status(400).json({ error: "Kode OTP wajib diisi." });
@@ -186,8 +281,8 @@ app.post("/api/auth/register", async (req, res) => {
 });
 
 // Login (email + password, cek ke database)
-app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
+app.post("/api/login", loginRateLimit, async (req, res) => {
+  const { email, password, rememberMe } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: "Email dan password wajib diisi." });
   }
@@ -205,7 +300,7 @@ app.post("/api/login", async (req, res) => {
     }
 
     const role = normalizeRole(user.role);
-    const token = generateToken({ id: user.id, name: user.name, email: user.email, role });
+    const token = generateToken({ id: user.id, name: user.name, email: user.email, role }, Boolean(rememberMe));
     return res.json({
       success: true,
       message: "Login successful.",
@@ -245,6 +340,9 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     );
 
     const appUrl = String(process.env.APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+    if (IS_PRODUCTION && /localhost|127\.0\.0\.1/.test(appUrl)) {
+      console.warn("WARNING: APP_URL masih menunjuk ke localhost di production — tautan reset password akan rusak.");
+    }
     const resetUrl = `${appUrl}/reset-password?token=${token}`;
     const sent = await sendResetLinkEmail(normalizedEmail, resetUrl);
 
@@ -253,9 +351,11 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       success: true,
       message: sent
         ? "Tautan reset password telah dikirim ke email Anda. Berlaku 15 menit."
-        : "Mode demo: SMTP belum dikonfigurasi. (Tautan tidak terkirim)",
+        : IS_PRODUCTION
+          ? "Gagal mengirim email. Hubungi administrator."
+          : "Mode demo: SMTP belum dikonfigurasi. (Tautan tidak terkirim)",
       devMode: !sent,
-      devUrl: sent ? null : resetUrl
+      devUrl: !IS_PRODUCTION && sent === false ? resetUrl : undefined
     });
   } catch (error) {
     console.error(error);
@@ -305,16 +405,19 @@ app.post("/api/payments/notification", async (req, res) => {
     return res.status(400).json({ error: "Payload notifikasi tidak valid." });
   }
 
-  // Verifikasi signature agar tidak ada pihak lain yang bisa memalsukan notifikasi
-  if (serverKey) {
-    const crypto = require("crypto");
-    const expected = crypto
-      .createHash("sha512")
-      .update(`${order_id}${status_code || ""}${gross_amount || ""}${serverKey}`)
-      .digest("hex");
-    if (!signature_key || expected !== String(signature_key).toLowerCase()) {
-      return res.status(403).json({ error: "Signature notifikasi tidak valid." });
-    }
+  // Verifikasi signature WAJIB (fail-closed): jangan pernah memproses notifikasi
+  // yang tidak ditandatangani, termasuk bila serverKey tidak terkonfigurasi.
+  if (!serverKey) {
+    console.error("MIDTRANS_SERVER_KEY tidak terkonfigurasi — webhook pembayaran ditolak.");
+    return res.status(503).json({ error: "Server key Midtrans belum dikonfigurasi." });
+  }
+  const crypto = require("crypto");
+  const expected = crypto
+    .createHash("sha512")
+    .update(`${order_id}${status_code || ""}${gross_amount || ""}${serverKey}`)
+    .digest("hex");
+  if (!signature_key || expected !== String(signature_key).toLowerCase()) {
+    return res.status(403).json({ error: "Signature notifikasi tidak valid." });
   }
 
   // Map status Midtrans -> status aplikasi
@@ -343,25 +446,23 @@ app.post("/api/payments/notification", async (req, res) => {
       return res.json({ success: true, ignored: "already_paid" });
     }
 
-    // Perbarui status secara atomik â€” hanya berhasil kalau status sebelumnya belum PAID
+    // Saat lunas, pastikan nominal dari Midtrans cocok dengan yang kita simpan
+    if (status === "PAID" && Number(gross_amount) !== Number(existing.totalBayar)) {
+      return res.status(400).json({ error: "Gross amount tidak cocok dengan transaksi tersimpan." });
+    }
+
+    // Transisi yang diizinkan: PENDING -> PAID/REJECTED, PAID -> REJECTED (refund/chargeback).
+    // REJECTED bersifat terminal (tidak boleh balik ke PAID).
     const result = await db.execute(
-      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
-      [status, status === "PAID" ? new Date() : null, order_id]
+      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND (status = 'PENDING' OR (status = 'PAID' AND ? = 'REJECTED'))",
+      [status, status === "PAID" ? new Date() : null, order_id, status]
     );
 
-    // Tambah stok terjual hanya jika transisi ini yang memicu PAID (hasil update > 0 baris)
-    if (status === "PAID" && result.affectedRows > 0 && existing.event_id) {
-      await db.execute(
-        "UPDATE events SET sold = sold + ? WHERE id = ?",
-        [existing.ticket_qty || 1, existing.event_id]
-      );
-      await logActivity(existing.user_name || "Sistem", "PURCHASE", `Pembayaran ${order_id} terverifikasi otomatis (Midtrans).`);
-    } else if (status === "REJECTED" && result.affectedRows > 0 && existing.status === "PAID" && existing.event_id) {
-      // Refund/chargeback setelah lunas: kembalikan stok yang terlanjur bertambah
-      await db.execute(
-        "UPDATE events SET sold = GREATEST(sold - ?, 0) WHERE id = ?",
-        [existing.ticket_qty || 1, existing.event_id]
-      );
+    // Model stok: kuota sudah DIPESAN (reserved) saat transaksi dibuat.
+    // Tidak ada penambahan sold saat PAID; stok hanya dikembalikan saat batal/refund.
+    if (status === "REJECTED" && result.affectedRows > 0 && existing.event_id) {
+      await releaseStock(existing.event_id, existing.ticket_qty || 1);
+      await logActivity(existing.user_name || "Sistem", "PAYMENT_REJECTED", `Pembayaran ${order_id} ${transaction_status} — stok dikembalikan.`);
     }
 
     res.json({ success: true });
@@ -594,7 +695,34 @@ app.post("/api/events", requireRole("admin"), async (req, res) => {
 
 app.put("/api/events/:id", requireRole("admin"), async (req, res) => {
   const { name, artist, category, date, time, ticketPrice, quota, location, description, poster, banner, status } = req.body;
+  const allowedStatus = ["ACTIVE", "SOLD OUT", "CLOSED", "DRAFT"];
+
+  // Validasi hanya field yang dikirim (COALESCE menyisakan nilai lama untuk field kosong)
+  if (ticketPrice != null && (!Number.isFinite(Number(ticketPrice)) || Number(ticketPrice) < 0)) {
+    return res.status(400).json({ error: "Harga tiket tidak valid." });
+  }
+  if (quota != null && (!Number.isInteger(Number(quota)) || Number(quota) <= 0)) {
+    return res.status(400).json({ error: "Kuota tiket harus bilangan bulat positif." });
+  }
+  if (date && isNaN(new Date(date).getTime())) {
+    return res.status(400).json({ error: "Tanggal event tidak valid." });
+  }
+  if (status && !allowedStatus.includes(status)) {
+    return res.status(400).json({ error: "Status event tidak valid." });
+  }
+
   try {
+    // Kuota baru tidak boleh lebih kecil dari tiket yang sudah terjual/dipesan
+    if (quota != null) {
+      const [ev] = await db.query("SELECT quota, sold FROM events WHERE id = ?", [req.params.id]);
+      if (!ev) {
+        return res.status(404).json({ error: "Event tidak ditemukan." });
+      }
+      if (Number(quota) < Number(ev.sold)) {
+        return res.status(400).json({ error: `Kuota tidak boleh kurang dari tiket yang sudah terjual (${ev.sold}).` });
+      }
+    }
+
     const result = await db.execute(
       `UPDATE events SET
         name = COALESCE(?, name),
@@ -627,8 +755,11 @@ app.put("/api/events/:id", requireRole("admin"), async (req, res) => {
 app.delete("/api/events/:id", requireRole("admin"), async (req, res) => {
   try {
     const [rows] = await db.query("SELECT name FROM events WHERE id = ?", [req.params.id]);
+    if (!rows) {
+      return res.status(404).json({ error: "Event tidak ditemukan." });
+    }
     await db.execute("DELETE FROM events WHERE id = ?", [req.params.id]);
-    await logActivity(req.user.name || "Admin", "EVENT_APPROVED", `Event "${rows ? rows.name : req.params.id}" dihapus.`);
+    await logActivity(req.user.name || "Admin", "EVENT_APPROVED", `Event "${rows.name}" dihapus.`);
     res.json({ success: true, message: "Event berhasil dihapus." });
   } catch (error) {
     console.error(error);
@@ -777,6 +908,8 @@ app.post("/api/payments/create", async (req, res) => {
   }
 
   let orderId = null;
+  let reservedEventId = null;
+  let reservedQty = 0;
   try {
     // Validasi kuota tiket (stok) sebelum membuat transaksi
     const [ev] = await db.query("SELECT name, ticketPrice, quota, sold, status FROM events WHERE id = ?", [eventId]);
@@ -790,16 +923,26 @@ app.post("/api/payments/create", async (req, res) => {
     if (qty > remaining) {
       return res.status(400).json({ error: `Stok tiket tidak mencukupi. Sisa tiket: ${remaining}.` });
     }
+
+    // Reservasi stok ATOMIK (race-safe): pembelian bersamaan tidak bisa oversell.
+    // Stok dianggap "terjual" sejak transaksi dibuat; dikembalikan jika batal/refund/ditolak.
+    if (!(await reserveStock(eventId, qty))) {
+      const [fresh] = await db.query("SELECT quota, sold FROM events WHERE id = ?", [eventId]);
+      const left = Math.max(0, Number(fresh.quota) - Number(fresh.sold));
+      return res.status(400).json({ error: `Stok tiket tidak mencukupi. Sisa tiket: ${left}.` });
+    }
+    reservedEventId = eventId;
+    reservedQty = qty;
     // Validasi nominal: hitung ulang dari harga di DB agar totalBayar tidak bisa dimanipulasi client
     const minimumTotal = Number(ev.ticketPrice) * qty;
     if (Number(totalBayar) < minimumTotal) {
       return res.status(400).json({ error: `Jumlah pembayaran tidak valid. Minimal Rp ${minimumTotal.toLocaleString("id-ID")}.` });
     }
 
-    // Hitung ulang total + pajak 10% server-side agar konsisten dengan item_details di Midtrans.
+    // Hitung ulang total + pajak server-side agar konsisten dengan item_details di Midtrans.
     // Tanpa ini Midtrans menolak: gross_amount != sum(item_details) -> HTTP 400.
     const baseAmount = Number(ev.ticketPrice) * qty;
-    const taxAmount = Math.round(baseAmount * 0.1 * 100) / 100;
+    const taxAmount = Math.round(baseAmount * TAX_RATE * 100) / 100;
     const grossAmount = Math.round((baseAmount + taxAmount) * 100) / 100;
 
     const orderIdValue = `EP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -851,7 +994,12 @@ app.post("/api/payments/create", async (req, res) => {
       redirectUrl: snapResponse.redirect_url
     });
   } catch (error) {
-    // Hapus baris PENDING yang gagal dibuat di Midtrans agar tidak jadi sampah
+    // Kembalikan stok yang sudah direservasi + hapus baris PENDING yang gagal dibuat di Midtrans
+    if (reservedEventId) {
+      try {
+        await releaseStock(reservedEventId, reservedQty);
+      } catch (_) { /* abaikan */ }
+    }
     try {
       await db.execute("DELETE FROM payments WHERE orderId = ? AND status = 'PENDING' AND snap_token IS NULL", [orderId]);
     } catch (_) { /* abaikan */ }
@@ -892,15 +1040,14 @@ app.get("/api/payments/:orderId/status", async (req, res) => {
           newStatus = "REJECTED";
         }
         if (newStatus !== rows.status) {
+          // Transisi yang diizinkan: PENDING -> PAID/REJECTED, PAID -> REJECTED. REJECTED terminal.
           const update = await db.execute(
-            "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
-            [newStatus, newStatus === "PAID" ? new Date() : null, req.params.orderId]
+            "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND (status = 'PENDING' OR (status = 'PAID' AND ? = 'REJECTED'))",
+            [newStatus, newStatus === "PAID" ? new Date() : null, req.params.orderId, newStatus]
           );
-          if (newStatus === "PAID" && update.affectedRows > 0 && rows.event_id) {
-            await db.execute(
-              "UPDATE events SET sold = sold + ? WHERE id = ?",
-              [rows.ticket_qty || 1, rows.event_id]
-            );
+          // Model stok: kuota sudah direservasi saat create; hanya dikembalikan saat batal/refund.
+          if (newStatus === "REJECTED" && update.affectedRows > 0 && rows.event_id) {
+            await releaseStock(rows.event_id, rows.ticket_qty || 1);
           }
           rows.status = newStatus;
         }
@@ -930,30 +1077,29 @@ app.post("/api/payments/:orderId/verify", requireRole("admin"), async (req, res)
       return res.status(404).json({ error: "Transaksi pembayaran tidak ditemukan." });
     }
 
-    // Atomic: hanya transisi yang benar-benar mengubah status yang diterapkan
+    if (status === "REJECTED" && existing.status === "REJECTED") {
+      return res.json({ success: true, unchanged: true, payment: existing });
+    }
+    if (status === "PAID" && existing.status !== "PENDING") {
+      return res.json({ success: true, unchanged: true, payment: existing });
+    }
+
+    // Transisi yang diizinkan: PENDING -> PAID/REJECTED, PAID -> REJECTED (refund/reject).
+    // REJECTED bersifat terminal; admin TIDAK boleh membalik pembayaran yang sudah ditolak.
     const updatedAt = status === "PAID" ? new Date() : null;
     const result = await db.execute(
-      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND status <> 'PAID'",
-      [status, updatedAt, orderId]
+      "UPDATE payments SET status = ?, verifiedAt = ? WHERE orderId = ? AND (status = 'PENDING' OR (status = 'PAID' AND ? = 'REJECTED'))",
+      [status, updatedAt, orderId, status]
     );
     if (result.affectedRows === 0) {
-      // Tidak ada perubahan (sudah PAID, atau status sama)
       const [fresh] = await db.query("SELECT * FROM payments WHERE orderId = ?", [orderId]);
       return res.json({ success: true, unchanged: true, payment: fresh });
     }
 
-    // Jika diverifikasi PAID manual (tanpa webhook), tambahkan stok terjual event
-    if (status === "PAID" && existing.event_id) {
-      await db.execute(
-        "UPDATE events SET sold = sold + ? WHERE id = ?",
-        [existing.ticket_qty || 1, existing.event_id]
-      );
-    } else if (status === "REJECTED" && existing.status === "PAID" && existing.event_id) {
-      // PAID -> REJECTED: kembalikan stok yang terlanjur bertambah
-      await db.execute(
-        "UPDATE events SET sold = GREATEST(sold - ?, 0) WHERE id = ?",
-        [existing.ticket_qty || 1, existing.event_id]
-      );
+    // Model stok: kuota sudah direservasi saat create; tidak ditambah saat PAID.
+    // Hanya dikembalikan ketika pembayaran dibatalkan/ditolak/refund.
+    if (status === "REJECTED" && existing.event_id) {
+      await releaseStock(existing.event_id, existing.ticket_qty || 1);
     }
 
     await logActivity(req.user.name || "Admin", "PAYMENT_VERIFIED", `Pembayaran ${orderId} diverifikasi (${status}).`);

@@ -5,6 +5,13 @@ export const metadata = {
   description: "Experience the Pulse of Future Events",
 };
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: "#09090b"
+};
+
 export default function RootLayout({ children }) {
   return (
     <html

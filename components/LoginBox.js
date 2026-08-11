@@ -11,7 +11,7 @@ import {
   Sparkles
 } from "lucide-react";
 
-export default function LoginBox({ email, setEmail, password, setPassword, handleLogin, authError, showPassword, setShowPassword, loading }) {
+export default function LoginBox({ email, setEmail, password, setPassword, handleLogin, authError, showPassword, setShowPassword, loading, rememberMe, setRememberMe }) {
   return (
     <div className="w-full max-w-[420px] bg-[#141419] border border-[#26262f] rounded-2xl p-8 glow-card transition-all duration-300 hover:border-[#ff3b70]/20">
       <form onSubmit={handleLogin} className="flex flex-col gap-5">
@@ -66,7 +66,8 @@ export default function LoginBox({ email, setEmail, password, setPassword, handl
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
-              defaultChecked
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
               className="accent-[#ff3b70] rounded border-[#26262f] bg-[#18181f]"
             />
             <span className="text-[#8b8b9a] hover:text-white transition-colors">Keep me signed in</span>

@@ -1,20 +1,30 @@
 const jwt = require("jsonwebtoken");
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
+const PLACEHOLDER_SECRETS = ["your_jwt_secret_here", "electricpulse-secret", "secret", "changeme"];
+const isProduction = process.env.NODE_ENV === "production";
+
+// Di production, JWT_SECRET WAJIB ada dan bukan placeholder — gagal cepat daripada
+// membiarkan token bisa dipalsukan dengan secret yang diketahui publik.
+if (isProduction && (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase()))) {
+  throw new Error("JWT_SECRET wajib diisi dengan string acak panjang di production. Perbaiki env lalu restart.");
+}
 const JWT_SECRET = process.env.JWT_SECRET || "electricpulse-secret";
 
-const PLACEHOLDER_SECRETS = ["your_jwt_secret_here", "electricpulse-secret", "secret", "changeme"];
-if (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase())) {
+if (!isProduction && (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase()))) {
   console.warn("PERINGATAN KEAMANAN: JWT_SECRET masih placeholder. Ganti dengan string acak panjang di server/.env (dan di Railway)!");
 }
 const TOKEN_EXPIRES_IN = "2h";
+const TOKEN_EXPIRES_IN_REMEMBER = "30d";
 
 const normalizeRole = (role) => {
   if (!role) return "user";
   return String(role).toLowerCase().includes("admin") ? "admin" : "user";
 };
 
-const generateToken = (user) => jwt.sign(user, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
+// rememberMe = true -> sesi panjang 30 hari, selain itu 2 jam
+const generateToken = (user, rememberMe = false) =>
+  jwt.sign(user, JWT_SECRET, { expiresIn: rememberMe ? TOKEN_EXPIRES_IN_REMEMBER : TOKEN_EXPIRES_IN });
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];

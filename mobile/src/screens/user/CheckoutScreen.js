@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "../../AuthContext";
@@ -12,6 +12,8 @@ export default function CheckoutScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [timeLeft, setTimeLeft] = useState(284);
+  const pollRef = useRef(null);
+  const payingRef = useRef(false);
 
   useEffect(() => {
     api
@@ -23,9 +25,19 @@ export default function CheckoutScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!paying || timeLeft <= 0) return;
-    const t = setInterval(() => setTimeLeft((p) => p - 1), 1000);
+    const t = setInterval(() => setTimeLeft((p) => (p > 0 ? p - 1 : 0)), 1000);
     return () => clearInterval(t);
   }, [paying, timeLeft]);
+
+  // Bersihkan interval polling saat layar ditutup (cegah setState/network setelah unmount)
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -42,9 +54,19 @@ export default function CheckoutScreen({ route, navigation }) {
   const taxes = Math.round(subtotal * 0.1 * 100) / 100;
   const total = subtotal + taxes;
 
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
   const handlePayment = async () => {
-    if (paying) return;
+    if (payingRef.current) return;
+    payingRef.current = true;
     setPaying(true);
+    setTimeLeft(284);
+    let orderId = null;
     try {
       const data = await api.post("/api/payments/create", {
         user: user?.name || "Guest",
@@ -54,34 +76,44 @@ export default function CheckoutScreen({ route, navigation }) {
         ticketQty: Number(qty),
         totalBayar: Math.round(total)
       });
+      orderId = data.payment?.orderId;
 
-      // Buka halaman pembayaran Midtrans di browser lalu poll status
-      if (data.redirectUrl) {
-        await WebBrowser.openBrowserAsync(data.redirectUrl);
-      }
-
+      // Mulai polling SEBELUM membuka browser, dan buka browser tanpa menunggu
+      // polling selesai, agar status PAID langsung terdeteksi.
       const pollStart = Date.now();
-      const poll = setInterval(async () => {
+      pollRef.current = setInterval(async () => {
         try {
-          const statusRes = await api.get(`/api/payments/${data.payment.orderId}/status`, true);
+          const statusRes = await api.get(`/api/payments/${orderId}/status`, true);
           if (statusRes.status === "PAID") {
-            clearInterval(poll);
+            stopPolling();
+            payingRef.current = false;
             setPaying(false);
             Alert.alert("Pembayaran Berhasil", "Tiket kamu sudah aktif. Cek tab Tiket Saya.", [
               { text: "OK", onPress: () => navigation.navigate("UserTabs", { screen: "Tickets" }) }
             ]);
-          } else if (Date.now() - pollStart > 120000) {
-            clearInterval(poll);
+          } else if (statusRes.status === "REJECTED") {
+            stopPolling();
+            payingRef.current = false;
             setPaying(false);
-            Alert.alert("Menunggu Pembayaran", "Pembayaran masih pending. Admin akan memverifikasi atau kamu bisa cek status nanti.");
+            Alert.alert("Pembayaran Ditolak", "Pembayaran tidak dapat diproses. Silakan coba lagi.");
+          } else if (Date.now() - pollStart > 120000) {
+            stopPolling();
+            payingRef.current = false;
+            setPaying(false);
+            Alert.alert("Menunggu Pembayaran", "Pembayaran masih pending. Cek status di riwayat nanti.");
           }
         } catch (e) {
-          clearInterval(poll);
-          setPaying(false);
-          Alert.alert("Gagal", e.message);
+          // Error transien (jaringan): jangan hentikan polling, coba lagi.
+          console.warn("Polling status gagal, coba lagi...", e.message);
         }
       }, 3000);
+
+      if (data.redirectUrl) {
+        await WebBrowser.openBrowserAsync(data.redirectUrl);
+      }
     } catch (e) {
+      stopPolling();
+      payingRef.current = false;
       setPaying(false);
       Alert.alert("Pembayaran Gagal", e.message);
     }

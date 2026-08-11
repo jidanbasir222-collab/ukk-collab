@@ -28,17 +28,18 @@ import {
   X,
   Heart,
   ChevronDown,
+  Menu,
   Sun,
   Moon,
   User,
   UserCircle,
   Users
 } from "lucide-react";
+import { API_BASE, apiFetch, clearSession, TAX_RATE, formatDate as fmtDate, formatTime as fmtTime } from "@/lib/api";
+import Image from "next/image";
 
 const USER_DEFAULT_IMAGE =
   "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80";
-
-const MEET_GREET_ADDON_PRICE = 500000;
 
 const mapTicketRow = (row) => {
   if (!row) return null;
@@ -101,7 +102,6 @@ export default function UserConsole() {
 
 function UserConsoleContent() {
   const router = useRouter();
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
   const [user, setUser] = useState(null);
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   
@@ -137,7 +137,6 @@ function UserConsoleContent() {
   // Checkout states
   const [selectedTicketTier, setSelectedTicketTier] = useState("VIP Access");
   const [ticketQuantity, setTicketQuantity] = useState(2);
-  const [meetGreetAddon, setMeetGreetAddon] = useState(false);
   const [timeLeft, setTimeLeft] = useState(284);
   const [paymentMethod, setPaymentMethod] = useState("ewallet");
 
@@ -181,6 +180,25 @@ function UserConsoleContent() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [latestOrderInfo, setLatestOrderInfo] = useState(null);
 
+  // Avatar: fallback ke inisial jika gambar gagal dimuat
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const avatarInitials = (fullName || "AV").substring(0, 2).toUpperCase();
+
+  // Mobile drawer navigation
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const NAV_ITEMS = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "discover", label: "Discover", icon: Compass },
+    { id: "tickets", label: "Tickets", icon: Ticket },
+    { id: "live", label: "Live", icon: Radio },
+    { id: "profile", label: "Profil", icon: User },
+    { id: "settings", label: "Pengaturan", icon: Settings },
+  ];
+  const navigateTo = (id) => {
+    setActiveTab(id);
+    setMobileNavOpen(false);
+  };
+
   // Initialize
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -216,27 +234,28 @@ function UserConsoleContent() {
         })
         .catch((err) => console.error(err));
 
-      fetch(`${API_BASE}/api/me/tickets`, { headers })
-        .then((res) => (res.ok ? res.json() : []))
+      // 401 di sini otomatis logout + redirect ke /login (sesi kedaluwarsa)
+      apiFetch(`${API_BASE}/api/me/tickets`, { headers })
         .then((rows) => {
           if (Array.isArray(rows)) {
-            setUserTickets(
-              rows.map(mapTicketRow).filter(Boolean)
-            );
+            setUserTickets(rows.map(mapTicketRow).filter(Boolean));
           }
         })
-        .catch((err) => console.error(err));
+        .catch((err) => {
+          if (err.message && err.message.includes("kedaluwarsa")) return;
+          console.error(err);
+        });
 
-      fetch(`${API_BASE}/api/me/payments`, { headers })
-        .then((res) => (res.ok ? res.json() : []))
+      apiFetch(`${API_BASE}/api/me/payments`, { headers })
         .then((rows) => {
           if (Array.isArray(rows)) {
-            setPaymentHistory(
-              rows.map(mapPaymentRow).filter(Boolean)
-            );
+            setPaymentHistory(rows.map(mapPaymentRow).filter(Boolean));
           }
         })
-        .catch((err) => console.error(err));
+        .catch((err) => {
+          if (err.message && err.message.includes("kedaluwarsa")) return;
+          console.error(err);
+        });
 
       const checkoutId = searchParams.get("checkout");
       if (checkoutId) {
@@ -264,15 +283,14 @@ function UserConsoleContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
-  // Timer countdown
+  // Timer countdown (self-terminating: berhenti otomatis saat timeLeft mencapai 0)
   useEffect(() => {
     if (activeTab !== "checkout" || timeLeft <= 0) return;
-    const interval = setInterval(() => {
+    const t = setTimeout(() => {
       setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+    return () => clearTimeout(t);
+  }, [activeTab, timeLeft]);
 
   // Pricing calculations (IDR)
   const getTicketPrice = () => {
@@ -289,6 +307,18 @@ function UserConsoleContent() {
 
   const formatIDR = (num) => "Rp " + Number(num).toLocaleString("id-ID");
 
+  // Format tanggal dengan aman (hindari RangeError saat tanggal invalid/null)
+  const safeFormatDate = (dateStr, opts, fallback = "TBA") => {
+    if (!dateStr) return fallback;
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return fallback;
+      return d.toLocaleDateString("en-US", opts);
+    } catch (err) {
+      return fallback;
+    }
+  };
+
   const formatTime = (seconds) => {
     const s = Math.max(0, Number(seconds) || 0);
     const m = Math.floor(s / 60);
@@ -297,9 +327,8 @@ function UserConsoleContent() {
   };
 
   const ticketPrice = getTicketPrice();
-  const addonPrice = !selectedEvent && meetGreetAddon ? MEET_GREET_ADDON_PRICE : 0;
-  const subtotal = ticketPrice * ticketQuantity + addonPrice;
-  const taxes = Math.round(subtotal * 0.1 * 100) / 100;
+  const subtotal = ticketPrice * ticketQuantity;
+  const taxes = Math.round(subtotal * TAX_RATE * 100) / 100;
   const total = subtotal + taxes;
 
   // Nilai kuota yang aman (hindari NaN kalau data event tidak lengkap)
@@ -370,52 +399,108 @@ function UserConsoleContent() {
         })
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data.error || "Gagal membuat transaksi pembayaran.");
+        throw new Error((data && data.error) || "Gagal membuat transaksi pembayaran.");
+      }
+      if (!data || !data.token) {
+        throw new Error("Respons pembayaran tidak valid dari server.");
+      }
+
+      if (paymentMethod === "qris") {
+        setIsPaying(false);
+        setLatestOrderInfo({
+          orderId: data.payment?.orderId || "QRIS-" + Date.now(),
+          total: formatIDR(total),
+          eventName: selectedEvent.name,
+          items: `${ticketQuantity}x General Admission`
+        });
+        setShowSuccessModal(true);
+        refreshUserData();
+        return;
       }
 
       await loadSnapScript();
 
       const onSnapSuccess = async (result) => {
-        // Midtrans webhook will update the DB; poll status until PAID
+        // Midtrans webhook akan memperbarui DB; poll status sampai final (PAID/REJECTED/dll.)
+        if (!data.payment || !data.payment.orderId) {
+          setIsPaying(false);
+          triggerNotification("Respons pembayaran tidak lengkap. Hubungi dukungan.");
+          return;
+        }
+        const orderId = data.payment.orderId;
+        let finished = false;
+        const finishPolling = () => {
+          finished = true;
+          clearInterval(pollInterval);
+          clearTimeout(safetyTimeout);
+        };
         const pollInterval = setInterval(async () => {
+          if (finished) return;
           try {
-            const statusRes = await fetch(`${API_BASE}/api/payments/${data.payment.orderId}/status`, {
+            const statusRes = await fetch(`${API_BASE}/api/payments/${orderId}/status`, {
               headers: { Authorization: `Bearer ${token}` }
             });
-            const statusData = await statusRes.json();
-            if (statusData.status === "PAID") {
-              clearInterval(pollInterval);
+            const statusData = await statusRes.json().catch(() => null);
+            const status = statusData && String(statusData.status || "").toUpperCase();
+            if (status === "PAID" || status === "SETTLEMENT") {
+              finishPolling();
               const ev = selectedEvent;
+              let ticketDate = "TBA";
+              try {
+                if (ev && ev.date) {
+                  const d = new Date(ev.date);
+                  if (!isNaN(d.getTime())) {
+                    ticketDate = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase();
+                  }
+                }
+              } catch (err) {}
               const newTicket = {
-                id: `T${userTickets.length + 1}`,
-                event: ev ? ev.name : "Neon Night Tour 2024",
+                id: orderId,
+                event: ev ? ev.name : "Event",
                 tier: `${ev ? ev.category || "General" : "General"} x${ticketQuantity}`,
-                date: ev ? new Date(ev.date).toLocaleDateString("en-US", { month: "short", day: "2-digit" }).toUpperCase() : "DEC 15",
-                venue: ev ? ev.location : "The Zenith Arena, London",
-                code: data.payment.orderId,
-                image: (ev && (ev.poster || ev.banner)) || "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?auto=format&fit=crop&w=400&q=80",
+                date: ticketDate,
+                venue: ev ? ev.location : "",
+                code: orderId,
+                image: (ev && (ev.poster || ev.banner)) || USER_DEFAULT_IMAGE,
                 status: "Active"
               };
               setUserTickets((prev) => [newTicket, ...prev]);
               setLatestOrderInfo({
-                orderId: data.payment.orderId,
-                items: `${ticketQuantity}x ${selectedEvent ? selectedEvent.name : "General"}`,
+                orderId,
+                eventName: ev ? ev.name : "Event",
+                items: `${ticketQuantity}x ${ev ? ev.name : "Event"}`,
                 total: formatIDR(total)
               });
               setIsPaying(false);
               setShowSuccessModal(true);
               setTimeLeft(284);
+            } else if (
+              status === "REJECTED" ||
+              status === "EXPIRED" ||
+              status === "CANCELLED" ||
+              status === "DENY" ||
+              status === "VOID"
+            ) {
+              // Final tapi gagal: hentikan polling dan beri tahu pengguna
+              finishPolling();
+              setIsPaying(false);
+              triggerNotification("Pembayaran tidak dapat diproses (dibatalkan/ditolak). Silakan coba lagi.");
             }
           } catch (err) {
-            clearInterval(pollInterval);
-            console.error(err);
+            // Error transien: jangan hentikan polling, biarkan percobaan berikutnya
+            console.warn("Polling status gagal, coba lagi...", err);
           }
         }, 3000);
 
-        // Stop polling after 2 minutes as a safety timeout
-        setTimeout(() => clearInterval(pollInterval), 120000);
+        // Safety timeout 2 menit: hentikan polling & kembalikan tombol bayar
+        const safetyTimeout = setTimeout(() => {
+          if (finished) return;
+          finishPolling();
+          setIsPaying(false);
+          triggerNotification("Waktu tunggu pembayaran habis. Jika sudah membayar, cek riwayat tiket Anda.");
+        }, 120000);
       };
 
       const onSnapPending = (result) => {
@@ -423,6 +508,7 @@ function UserConsoleContent() {
       };
 
       const onSnapError = (result) => {
+        setIsPaying(false);
         triggerNotification("Pembayaran dibatalkan atau gagal.");
       };
 
@@ -443,8 +529,7 @@ function UserConsoleContent() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    clearSession();
     router.replace("/");
   };
 
@@ -455,13 +540,14 @@ function UserConsoleContent() {
       const res = await fetch(`${API_BASE}/api/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: fullName, phone: phoneNumber })
+        body: JSON.stringify({ name: fullName, email: emailAddress, phone: phoneNumber })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menyimpan profil.");
       try {
         const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
-        localStorage.setItem("user", JSON.stringify({ ...storedUser, ...(data.user || { name: fullName, phone: phoneNumber }) }));
+        localStorage.setItem("user", JSON.stringify({ ...storedUser, ...(data.user || { name: fullName, email: emailAddress, phone: phoneNumber }) }));
+        setUser((prev) => ({ ...prev, name: fullName, email: emailAddress, phone: phoneNumber }));
       } catch (err) {}
       triggerNotification("Data profil berhasil diperbarui!");
     } catch (error) {
@@ -515,13 +601,15 @@ function UserConsoleContent() {
       if (q && !haystack.includes(q)) return false;
 
       const cat = (ev.category || "").toLowerCase();
-      const inConcert = ["pop", "rock", "indie"].some((c) => cat.includes(c));
+      const inConcert = ["concert", "konser", "pop", "rock", "indie"].some((c) => cat.includes(c));
       const inFestival = cat.includes("festival");
-      const inClub = ["jazz", "electronic"].some((c) => cat.includes(c));
+      const inClub = ["jazz", "electronic", "club", "dance", "house"].some((c) => cat.includes(c));
       const allowed =
         (filterConcert && inConcert) ||
         (filterFestival && inFestival) ||
         (filterClubNight && inClub);
+      // Event dengan kategori tak terklasifikasi tetap ditampilkan
+      if (!inConcert && !inFestival && !inClub) return true;
       if (!allowed) return false;
 
       if (Number(ev.ticketPrice) > priceRange) return false;
@@ -530,7 +618,11 @@ function UserConsoleContent() {
     .sort((a, b) => {
       if (sortBy === "price_asc") return (Number(a.ticketPrice) || 0) - (Number(b.ticketPrice) || 0);
       if (sortBy === "price_desc") return (Number(b.ticketPrice) || 0) - (Number(a.ticketPrice) || 0);
-      if (sortBy === "date") return new Date(a.date || 0) - new Date(b.date || 0);
+      if (sortBy === "date") {
+        const ta = new Date(a.date || "").getTime();
+        const tb = new Date(b.date || "").getTime();
+        return (isNaN(ta) ? Number.MAX_SAFE_INTEGER : ta) - (isNaN(tb) ? Number.MAX_SAFE_INTEGER : tb);
+      }
       return 0;
     });
 
@@ -624,9 +716,18 @@ function UserConsoleContent() {
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         
         {/* Header */}
-        <header className="h-16 bg-[#0d0d10] border-b border-[#26262f]/45 flex items-center justify-between px-6 z-10 shrink-0">
-          <div className="flex items-center gap-4 flex-1 max-w-md">
-            <div className="relative w-full">
+        <header className="h-16 bg-[#0d0d10] border-b border-[#26262f]/45 flex items-center justify-between gap-3 px-4 md:px-6 z-10 shrink-0">
+          <div className="flex items-center gap-3 flex-1 min-w-0 max-w-md">
+            {/* Hamburger menu (mobile only) */}
+            <button
+              onClick={() => setMobileNavOpen(true)}
+              className="md:hidden w-8.5 h-8.5 rounded-xl border border-[#26262f] bg-[#141419] flex items-center justify-center text-[#8b8b9a] hover:text-white transition-all cursor-pointer shrink-0"
+              aria-label="Buka menu navigasi"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+
+            <div className="relative w-full min-w-0">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b9a]" />
               <input
                 type="text"
@@ -638,7 +739,7 @@ function UserConsoleContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 md:gap-3 shrink-0">
             {/* Theme Toggle Button */}
             <button
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
@@ -662,24 +763,95 @@ function UserConsoleContent() {
             {/* Profile circular avatar */}
             <div
               className="w-8.5 h-8.5 rounded-full bg-gradient-to-br from-[#ff3b70]/20 to-[#8b5cf6]/20 border border-[#ff3b70]/30 flex items-center justify-center text-xs font-bold text-white shadow-md shadow-[#ff3b70]/5 cursor-pointer hover:scale-105 transition-all overflow-hidden"
-              onClick={() => setActiveTab("profile")}
+              onClick={() => navigateTo("profile")}
             >
-              <img
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80"
-                alt="Avatar"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  e.target.style.display = "none";
-                }}
-              />
-              <span className="font-mono">AV</span>
+              {avatarFailed ? (
+                <span className="font-mono">{avatarInitials}</span>
+              ) : (
+                <Image
+                  src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80"
+                  alt="Avatar"
+                  width={34}
+                  height={34}
+                  className="w-full h-full object-cover"
+                  onError={() => setAvatarFailed(true)}
+                />
+              )}
             </div>
           </div>
         </header>
 
+        {/* ==================== MOBILE NAV DRAWER ==================== */}
+        {mobileNavOpen && (
+          <div className="fixed inset-0 z-50 md:hidden">
+            <div
+              className="absolute inset-0 bg-[#09090b]/80 backdrop-blur-sm animate-fade-in"
+              onClick={() => setMobileNavOpen(false)}
+            />
+            <div className="absolute left-0 top-0 h-full w-72 max-w-[85vw] bg-[#0d0d10] border-r border-[#26262f] flex flex-col shadow-2xl animate-slide-up">
+              <div className="flex items-center justify-between px-5 py-5 border-b border-[#26262f]/45">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#ff3b70] to-[#8b5cf6] flex items-center justify-center shadow-lg shadow-[#ff3b70]/10">
+                    <span className="text-white text-xs font-bold font-mono">EP</span>
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-extrabold text-white tracking-wider font-mono">Pulse Console</h2>
+                    <span className="text-[8px] uppercase tracking-[0.25em] text-[#8b8b9a] font-bold">v1.0.42</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMobileNavOpen(false)}
+                  className="w-8 h-8 rounded-lg border border-[#26262f] bg-[#141419] flex items-center justify-center text-[#8b8b9a] hover:text-white"
+                  aria-label="Tutup menu"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
+                {NAV_ITEMS.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => navigateTo(item.id)}
+                      className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                        isActive
+                          ? "bg-gradient-to-r from-[#ff3b70]/15 to-[#8b5cf6]/5 text-white border-l-2 border-[#ff3b70]"
+                          : "text-[#8b8b9a] hover:text-white hover:bg-[#141419]"
+                      }`}
+                    >
+                      <Icon className={`w-4.5 h-4.5 ${isActive ? "text-[#ff3b70]" : "text-[#8b8b9a]"}`} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <div className="p-4 border-t border-[#26262f]/45 space-y-1.5">
+                <button
+                  onClick={() => { triggerNotification("Documentation is offline."); setMobileNavOpen(false); }}
+                  className="w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-bold tracking-wide text-[#8b8b9a] hover:text-white hover:bg-[#141419] cursor-pointer"
+                >
+                  <HelpCircle className="w-4.5 h-4.5 text-[#8b8b9a]" />
+                  <span>Help</span>
+                </button>
+                <button
+                  onClick={() => { setMobileNavOpen(false); handleLogout(); }}
+                  className="w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-bold tracking-wide text-[#8b8b9a] hover:text-[#ff3b70] hover:bg-[#141419] cursor-pointer"
+                >
+                  <LogOut className="w-4.5 h-4.5 text-[#8b8b9a]" />
+                  <span>Logout</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Notification panel */}
         {notification && (
-          <div className="absolute top-20 right-6 bg-[#141419] border border-[#ff3b70]/40 text-white text-xs px-5 py-3.5 rounded-2xl flex items-center gap-3 z-50 shadow-2xl animate-fade-in max-w-sm backdrop-blur-md">
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 w-[calc(100vw-2rem)] sm:w-auto max-w-sm bg-[#141419] border border-[#ff3b70]/40 text-white text-xs px-5 py-3.5 rounded-2xl flex items-center gap-3 z-50 shadow-2xl animate-fade-in backdrop-blur-md">
             <div className="w-1.5 h-1.5 rounded-full bg-[#ff3b70] animate-ping" />
             <span className="font-medium">{notification}</span>
           </div>
@@ -775,7 +947,7 @@ function UserConsoleContent() {
                             <h4 className="text-sm font-bold text-white mt-0.5 truncate leading-tight group-hover:text-[#ff3b70] transition-colors">{item.name}</h4>
                             <p className="text-[11px] text-[#8b8b9a] font-mono mt-1 flex items-center gap-1.5">
                               <CalendarDays className="w-3.5 h-3.5 text-[#ff3b70]/60" />
-                              {item.date ? new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "TBA"} · {item.location || "TBA"}
+                              {safeFormatDate(item.date, { month: "short", day: "numeric" })} · {item.location || "TBA"}
                             </p>
                           </div>
                           <div className="flex items-center justify-between border-t border-[#26262f]/30 pt-2 mt-2">
@@ -802,8 +974,8 @@ function UserConsoleContent() {
                 {/* History list */}
                 <div className="lg:col-span-5 space-y-4">
                   <h3 className="text-xs font-bold tracking-wider text-[#8b8b9a] uppercase">Payment History</h3>
-                  <div className="bg-[#141419] border border-[#26262f] rounded-2xl glow-card overflow-hidden">
-                    <table className="w-full text-left border-collapse text-xs">
+                  <div className="bg-[#141419] border border-[#26262f] rounded-2xl glow-card overflow-x-auto">
+                    <table className="w-full min-w-[420px] text-left border-collapse text-xs">
                       <thead>
                         <tr className="border-b border-[#26262f] bg-[#0d0d10]/40 text-[#8b8b9a] font-bold uppercase tracking-wider">
                           <th className="py-3 px-4 text-[9px]">Event Name</th>
@@ -852,8 +1024,8 @@ function UserConsoleContent() {
                       onClick={() => {
                         setFilterConcert(true);
                         setFilterConcertFestival(true);
-                        setFilterClubNight(true);
-                        setPriceRange(maxTicketPrice);
+                        setFilterClubNight(false);
+                        setPriceRange(1500000);
                         setSearchQuery("");
                       }}
                       className="text-xs font-bold text-[#ff3b70] hover:text-[#ff5c8a] hover:underline"
@@ -977,9 +1149,7 @@ function UserConsoleContent() {
                   ) : (
                   <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                     {visibleEvents.map((item) => {
-                      const evDate = item.date
-                        ? new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                        : "TBA";
+                      const evDate = safeFormatDate(item.date, { month: "short", day: "numeric", year: "numeric" });
                       const soldOut = item.status === "SOLD OUT" || item.status === "CLOSED" || (Number(item.quota) > 0 && Number(item.sold) >= Number(item.quota));
                       return (
                       <div
@@ -1091,7 +1261,7 @@ function UserConsoleContent() {
                   <div className="flex flex-wrap gap-4 pt-2 border-t border-[#26262f]/40">
                     <div className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                       <Clock className="w-4 h-4 text-[#ff3b70]" />
-                      <span>{selectedEvent.date ? new Date(selectedEvent.date).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "TBA"} {selectedEvent.time || ""}</span>
+                      <span>{selectedEvent.date ? fmtDate(selectedEvent.date) : "TBA"} • {fmtTime(selectedEvent.time) || ""} WIB</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                       <MapPin className="w-4 h-4 text-[#ff3b70]" />
@@ -1121,7 +1291,7 @@ function UserConsoleContent() {
                 }`}>
                   <div>
                     <h3 className={`text-base font-bold tracking-wide ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Select Tickets</h3>
-                    <p className="text-[11px] text-[#8b8b9a] mt-1 font-semibold leading-none">Harga per tiket sudah termasuk pajak.</p>
+                    <p className="text-[11px] text-[#8b8b9a] mt-1 font-semibold leading-none">Harga per tiket belum termasuk pajak 10%.</p>
                   </div>
 
                   <div className="flex flex-col gap-3">
@@ -1192,13 +1362,13 @@ function UserConsoleContent() {
           {/* ==================== C. CHECKOUT VIEW ==================== */}
           {activeTab === "checkout" && (
             <div className="max-w-5xl mx-auto p-4 md:p-8 flex flex-col gap-7 animate-fade-in text-[#18181f]">
-              <div className="flex items-center justify-between border-b border-[#26262f]/10 pb-4.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#26262f]/10 pb-4.5">
                 <div>
                   <h1 className={`text-xl font-extrabold font-mono tracking-tight ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Electric Pulse</h1>
                   <p className="text-[10px] uppercase tracking-widest text-[#8b8b9a] font-bold mt-0.5">Payment Gateway</p>
                 </div>
                 
-                <div className="flex items-center gap-2 py-2 px-4 rounded-full bg-[#ff3b70]/10 border border-[#ff3b70]/20 text-[#ff3b70] text-xs font-mono font-bold shadow-sm">
+                <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-full bg-[#ff3b70]/10 border border-[#ff3b70]/20 text-[#ff3b70] text-xs font-mono font-bold shadow-sm self-start sm:self-auto">
                   <Clock className="w-3.5 h-3.5 animate-spin" />
                   <span>Complete payment within {formatTime(timeLeft)}</span>
                 </div>
@@ -1272,6 +1442,7 @@ function UserConsoleContent() {
 
                     <div className="flex flex-col gap-3">
                       {[
+                        { id: "qris", name: "QRIS", info: "Scan untuk membayar", icon: QrCode },
                         { id: "ewallet", name: "E-Wallet", info: "Gopay, OVO, Dana", icon: Wallet },
                         { id: "va", name: "Virtual Account", info: "BCA, Mandiri, BNI", icon: Building },
                         { id: "card", name: "Credit Card", info: "Visa, Mastercard", icon: CreditCard }
@@ -1311,6 +1482,14 @@ function UserConsoleContent() {
                       })}
                     </div>
                   </div>
+                  {paymentMethod === "qris" && (
+                    <div className={`mt-2 p-4 border rounded-xl flex flex-col items-center justify-center text-center gap-3 ${
+                      theme === "dark" ? "bg-[#18181f] border-[#26262f]" : "bg-[#f9fafb] border-[#e5e7eb]"
+                    }`}>
+                      <img src="/qris.jpeg" alt="QRIS Payment" className="w-48 h-48 object-contain rounded-lg shadow-sm" />
+                      <p className="text-[10px] text-[#8b8b9a] font-semibold">Scan QRIS ini dengan aplikasi e-wallet atau m-banking Anda untuk menyelesaikan pembayaran.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Summary Panel */}
@@ -1327,16 +1506,6 @@ function UserConsoleContent() {
                       </div>
                       <span className={`font-bold shrink-0 whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(ticketPrice * ticketQuantity)}</span>
                     </div>
-
-                    {!selectedEvent && meetGreetAddon && (
-                      <div className="flex justify-between items-start gap-3 border-t border-[#26262f]/10 pt-4">
-                        <div className="min-w-0">
-                          <span className={`font-sans font-bold block break-words ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>Meet & Greet Add-on</span>
-                          <span className="text-[10px] text-[#8b8b9a] font-semibold">1x {formatIDR(MEET_GREET_ADDON_PRICE)}</span>
-                        </div>
-                        <span className={`font-bold shrink-0 whitespace-nowrap ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>{formatIDR(MEET_GREET_ADDON_PRICE)}</span>
-                      </div>
-                    )}
 
                     <div className="h-px bg-[#26262f]/10 my-4" />
 
@@ -1383,13 +1552,13 @@ function UserConsoleContent() {
           {/* ==================== D. TICKETS VIEW (SCREENSHOT 4 LIGHT/DARK COMPATIBLE) ==================== */}
           {activeTab === "tickets" && (
             <div className="max-w-6xl mx-auto p-4 md:p-8 flex flex-col gap-6 animate-fade-in">
-              <div className="flex items-center justify-between border-b border-[#26262f]/10 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#26262f]/10 pb-3">
                 <div>
                   <h1 className={`text-xl font-extrabold ${theme === "dark" ? "text-white" : "text-[#18181f]"}`}>My Tickets</h1>
                   <p className="text-[10px] text-[#8b8b9a] font-semibold mt-0.5">Manage your upcoming events and view past experiences.</p>
                 </div>
 
-                <div className="flex items-center bg-[#e5e7eb]/60 rounded-xl p-1 border border-[#26262f]/5">
+                <div className="flex items-center bg-[#e5e7eb]/60 rounded-xl p-1 border border-[#26262f]/5 self-start sm:self-auto">
                   <button
                     onClick={() => setTicketFilter("upcoming")}
                     className={`px-4 py-2 rounded-lg text-[10px] font-extrabold tracking-wide transition-all ${
@@ -1440,9 +1609,13 @@ function UserConsoleContent() {
                         className="h-36 bg-cover bg-center shrink-0 relative"
                         style={{ backgroundImage: `url('${ticket.image}')` }}
                       >
-                        <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[8px] font-extrabold tracking-wider bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono flex items-center gap-1">
-                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-ping" />
-                          <span>Active</span>
+                        <span className={`absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[8px] font-extrabold tracking-wider font-mono flex items-center gap-1 ${
+                          ticket.status === "Past"
+                            ? "bg-[#26262f]/80 border border-white/10 text-[#8b8b9a]"
+                            : "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                        }`}>
+                          <span className={`w-1 h-1 rounded-full ${ticket.status === "Past" ? "bg-[#8b8b9a]" : "bg-emerald-400 animate-ping"}`} />
+                          <span>{ticket.status === "Past" ? "Past" : "Active"}</span>
                         </span>
                         
                         <div className="absolute bottom-3 left-3 bg-[#18181f]/85 border border-white/10 rounded-xl p-2 text-center text-white min-w-[50px] font-mono leading-none">
@@ -1519,11 +1692,18 @@ function UserConsoleContent() {
                       {/* Avatar Edit */}
                       <div className="relative group shrink-0">
                         <div className="w-20 h-20 rounded-full border-2 border-[#ff3b70]/30 overflow-hidden shadow-lg bg-gray-900 flex items-center justify-center text-white">
-                          <img
-                            src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
-                            alt="Avatar"
-                            className="w-full h-full object-cover"
-                          />
+                          {avatarFailed ? (
+                            <span className="font-mono text-xl font-bold">{avatarInitials}</span>
+                          ) : (
+                            <Image
+                              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
+                              alt="Avatar"
+                              width={80}
+                              height={80}
+                              className="w-full h-full object-cover"
+                              onError={() => setAvatarFailed(true)}
+                            />
+                          )}
                         </div>
                         <button
                           onClick={() => triggerNotification("Profile picture upload coming soon.")}
@@ -1860,7 +2040,7 @@ function UserConsoleContent() {
         </main>
 
         {/* Footer info (Screenshot 2 and 3) */}
-        <footer className="h-10 bg-[#0d0d10] border-t border-[#26262f]/45 flex items-center justify-between px-6 text-[9px] text-[#8b8b9a] shrink-0 font-semibold uppercase tracking-wider">
+        <footer className="min-h-10 h-auto py-2 bg-[#0d0d10] border-t border-[#26262f]/45 flex flex-wrap items-center justify-center sm:justify-between gap-1.5 px-4 md:px-6 text-[9px] text-[#8b8b9a] shrink-0 font-semibold uppercase tracking-wider">
           <span>Electric Pulse · © 2026 Future Sound Systems.</span>
           <div className="flex gap-4">
             <a href="#" className="hover:text-white transition-colors">Terms</a>
@@ -1891,15 +2071,11 @@ function UserConsoleContent() {
             </div>
 
             <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-xl">
-              {/* QR asli: dapat dipindai dan berisi data tiket */}
+              {/* QR bawaan (bisa QRIS jika terpilih, fallback ke QR tiket) */}
               <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
-                  `EP-TICKET|${activeAccessTicket.code}|${activeAccessTicket.event}`
-                )}`}
+                src="/qris.jpeg"
                 alt={`QR Code tiket ${activeAccessTicket.code}`}
-                className="w-44 h-44"
-                width={176}
-                height={176}
+                className="w-44 h-44 object-contain"
               />
               <span className="text-xs font-mono font-bold tracking-widest text-[#09090b]">
                 {activeAccessTicket.code}
@@ -1940,7 +2116,7 @@ function UserConsoleContent() {
               
               <div className="flex justify-between items-start gap-4 border-t border-[#26262f]/45 pt-3">
                 <div>
-                  <span className="font-sans font-bold text-white block">Neon Night Tour 2024</span>
+                  <span className="font-sans font-bold text-white block">{latestOrderInfo.eventName}</span>
                   <span className="text-[10px] text-[#8b8b9a] font-semibold">{latestOrderInfo.items}</span>
                 </div>
                 <span className="text-white font-bold">{latestOrderInfo.total}</span>

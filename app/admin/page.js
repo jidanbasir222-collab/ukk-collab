@@ -24,6 +24,7 @@ import {
   X,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Wallet,
   CalendarDays,
   Music,
@@ -142,6 +143,7 @@ export default function Home() {
   // Notification State
   const [showNotification, setShowNotification] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState("");
+  const notificationTimer = React.useRef(null);
 
   // Mock Categories State
   const [categories, setCategories] = useState([
@@ -257,9 +259,21 @@ export default function Home() {
   });
 
   // Payments history metrics (live from API, fallback to mock baseline)
-  const verifiedRevenueToday = stats ? stats.verifiedRevenueToday : 45200000;
+  const verifiedRevenueToday = Number(stats?.verifiedRevenueToday) || 45200000;
 
   // Live data refresh helper
+  // Saat token kedaluwarsa (401), logout otomatis & kembali ke halaman login
+  const handleAuthFailure = (res) => {
+    if (res.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      setIsLoggedIn(false);
+      router.replace("/");
+      return true;
+    }
+    return false;
+  };
+
   const refreshEvents = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/events`);
@@ -281,6 +295,12 @@ export default function Home() {
     }
   };
 
+  // Deterministic avatar index dari id artis (hindari avatar berubah tiap polling)
+  const avatarIndexFor = (id) => {
+    const hash = String(id).split("").reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 997, 7);
+    return hash % 3;
+  };
+
   const refreshArtists = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/artists`);
@@ -290,7 +310,7 @@ export default function Home() {
           data.map((a) => ({
             ...a,
             id: String(a.id),
-            avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : Math.floor(Math.random() * 3)
+            avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : avatarIndexFor(a.id)
           }))
         );
       }
@@ -322,6 +342,7 @@ export default function Home() {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE}/api/payments`, { headers: { Authorization: `Bearer ${token}` } });
+      if (handleAuthFailure(res)) return;
       const data = await res.json();
       if (Array.isArray(data)) {
         const mapped = data.map((p, idx) => ({
@@ -360,6 +381,8 @@ export default function Home() {
         quota: Number(eventForm.quota) || 5000,
         location: eventForm.location,
         description: eventForm.description || null,
+        poster: eventForm.poster || null,
+        banner: eventForm.banner || null,
         status: eventForm.status || "ACTIVE"
       };
 
@@ -380,6 +403,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menyimpan event.");
 
+      const wasEditing = editingEventId;
       await refreshEvents();
       setEditingEventId(null);
       setEventForm({
@@ -392,11 +416,12 @@ export default function Home() {
         quota: 5000,
         location: "",
         description: "",
+        status: "ACTIVE",
         poster: null,
         banner: null
       });
       setEventSubView("list");
-      triggerNotification(editingEventId ? "Event berhasil diperbarui!" : "Event baru berhasil ditambahkan!");
+      triggerNotification(wasEditing ? "Event berhasil diperbarui!" : "Event baru berhasil ditambahkan!");
     } catch (error) {
       triggerNotification(error.message || "Gagal menambahkan event.");
     }
@@ -417,6 +442,37 @@ export default function Home() {
       triggerNotification("Event berhasil dihapus.");
     } catch (error) {
       triggerNotification(error.message || "Gagal menghapus event.");
+    }
+  };
+
+  // Upload poster/banner event ke server (asli, bukan mock)
+  const posterInputRef = React.useRef(null);
+  const bannerInputRef = React.useRef(null);
+
+  const handleFileUpload = (field) => {
+    if (field === "poster") posterInputRef.current?.click();
+    else bannerInputRef.current?.click();
+  };
+
+  const uploadFile = async (e, field) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const token = localStorage.getItem("token");
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengunggah gambar.");
+      setEventForm((prev) => ({ ...prev, [field]: data.url }));
+      triggerNotification(`Gambar ${field === "poster" ? "poster" : "banner"} berhasil diunggah!`);
+    } catch (error) {
+      triggerNotification(error.message || "Gagal mengunggah gambar.");
     }
   };
 
@@ -515,9 +571,8 @@ export default function Home() {
     }
   };
 
-  // Delete Artist Handler (DELETE to API)
+  // Delete Artist Handler (DELETE to API) — konfirmasi sudah ditangani oleh modal detail
   const handleDeleteArtist = async (id) => {
-    if (!confirm("Apakah Anda yakin ingin menghapus artis ini dari management?")) return;
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE}/api/artists/${id}`, {
@@ -566,6 +621,7 @@ export default function Home() {
     quota: 5000,
     location: "",
     description: "",
+    status: "ACTIVE",
     poster: null,
     banner: null
   });
@@ -586,6 +642,20 @@ export default function Home() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState("SEMUA");
   // Artist Filter state
   const [artistGenreFilter, setArtistGenreFilter] = useState("Semua Genre");
+  // Artist sort state
+  const [artistSort, setArtistSort] = useState("Terbaru");
+  // Event category filter state
+  const [eventCategoryFilter, setEventCategoryFilter] = useState("Semua Kategori");
+  // Laporan timeline filter state
+  const [reportRange, setReportRange] = useState("Terakhir 30 Hari");
+  // Settings toggles & preferences state
+  const [adminSettings, setAdminSettings] = useState({
+    emailAlerts: true,
+    paymentNotif: true,
+    stockNotif: true,
+    language: "Bahasa Indonesia",
+    currency: "IDR (Rp)"
+  });
 
   // Fetch live data from API when logged in
   useEffect(() => {
@@ -594,8 +664,12 @@ export default function Home() {
     const headers = { Authorization: `Bearer ${token}` };
 
     fetch(`${API_BASE}/api/payments`, { headers })
-      .then((res) => res.json())
+      .then((res) => {
+        if (handleAuthFailure(res)) return null;
+        return res.json();
+      })
       .then((data) => {
+        if (!data) return;
         if (Array.isArray(data) && data.length > 0) {
           const mapped = data.map((p, idx) => ({
             orderId: p.orderId || `#VB-${100000 + idx}`,
@@ -639,7 +713,7 @@ export default function Home() {
             data.map((a) => ({
               ...a,
               id: String(a.id),
-              avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : Math.floor(Math.random() * 3)
+              avatarIndex: a.avatarIndex != null ? Number(a.avatarIndex) : avatarIndexFor(a.id)
             }))
           );
         }
@@ -663,14 +737,20 @@ export default function Home() {
       .catch((err) => console.error("Gagal mengambil data kategori:", err));
 
     fetch(`${API_BASE}/api/dashboard/stats`, { headers })
-      .then((res) => res.json())
+      .then((res) => {
+        if (handleAuthFailure(res)) return null;
+        return res.json();
+      })
       .then((data) => {
         if (data && typeof data.totalEvents === "number") setStats(data);
       })
       .catch((err) => console.error("Gagal mengambil statistik dashboard:", err));
 
     fetch(`${API_BASE}/api/dashboard/activity`, { headers })
-      .then((res) => res.json())
+      .then((res) => {
+        if (handleAuthFailure(res)) return null;
+        return res.json();
+      })
       .then((data) => {
         if (Array.isArray(data)) setActivity(data);
       })
@@ -688,13 +768,19 @@ export default function Home() {
       const token = localStorage.getItem("token");
       const headers = { Authorization: `Bearer ${token}` };
       fetch(`${API_BASE}/api/dashboard/stats`, { headers })
-        .then((res) => res.json())
+        .then((res) => {
+          if (handleAuthFailure(res)) return null;
+          return res.json();
+        })
         .then((data) => {
           if (data && typeof data.totalEvents === "number") setStats(data);
         })
         .catch(() => {});
       fetch(`${API_BASE}/api/dashboard/activity`, { headers })
-        .then((res) => res.json())
+        .then((res) => {
+          if (handleAuthFailure(res)) return null;
+          return res.json();
+        })
         .then((data) => {
           if (Array.isArray(data)) setActivity(data);
         })
@@ -705,12 +791,14 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [isLoggedIn]);
 
-  // Helper trigger notification
+  // Helper trigger notification (dengan cleanup timer agar tidak saling menimpa)
   const triggerNotification = (msg) => {
     setNotificationMsg(msg);
     setShowNotification(true);
-    setTimeout(() => {
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    notificationTimer.current = setTimeout(() => {
       setShowNotification(false);
+      notificationTimer.current = null;
     }, 4000);
   };
 
@@ -723,6 +811,76 @@ export default function Home() {
     setTimeout(() => router.replace("/"), 400);
   };
 
+  // Profil & keamanan admin (form yang BENAR-BENAR menyimpan ke API)
+  const [adminProfileName, setAdminProfileName] = useState("");
+  const [adminProfileEmail, setAdminProfileEmail] = useState("");
+  const [adminOldPassword, setAdminOldPassword] = useState("");
+  const [adminNewPassword, setAdminNewPassword] = useState("");
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState("");
+
+  useEffect(() => {
+    if (adminUser) {
+      setAdminProfileName(adminUser.name || "");
+      setAdminProfileEmail(adminUser.email || "");
+    }
+  }, [adminUser]);
+
+  const handleSaveAdminProfile = async (e) => {
+    e.preventDefault();
+    if (!adminProfileName.trim() || !adminProfileEmail.trim()) {
+      triggerNotification("Nama dan email wajib diisi.");
+      return;
+    }
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: adminProfileName, email: adminProfileEmail })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menyimpan profil.");
+      const storedUser = JSON.parse(localStorage.getItem("user") || "{}");
+      localStorage.setItem("user", JSON.stringify({ ...storedUser, name: adminProfileName, email: adminProfileEmail }));
+      setAdminUser((prev) => ({ ...prev, name: adminProfileName, email: adminProfileEmail }));
+      triggerNotification("Profil admin berhasil diperbarui!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal menyimpan profil.");
+    }
+  };
+
+  const handleUpdateAdminPassword = async (e) => {
+    e.preventDefault();
+    if (!adminOldPassword || !adminNewPassword) {
+      triggerNotification("Password lama dan baru wajib diisi.");
+      return;
+    }
+    if (String(adminNewPassword).length < 6) {
+      triggerNotification("Password baru minimal 6 karakter.");
+      return;
+    }
+    if (adminNewPassword !== adminConfirmPassword) {
+      triggerNotification("Konfirmasi password baru tidak cocok.");
+      return;
+    }
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/profile/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword: adminOldPassword, newPassword: adminNewPassword })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal mengubah password.");
+      setAdminOldPassword("");
+      setAdminNewPassword("");
+      setAdminConfirmPassword("");
+      triggerNotification("Password admin berhasil diperbarui!");
+    } catch (error) {
+      triggerNotification(error.message || "Gagal mengubah password.");
+    }
+  };
+
   // Dynamic Potential Revenue for Add Form
   const potentialRevenue = eventForm.ticketPrice * eventForm.quota;
 
@@ -732,15 +890,16 @@ export default function Home() {
   const totalSoldTickets = events.reduce((sum, e) => sum + e.sold, 0);
   const totalRevenue = events.reduce((sum, e) => sum + (e.sold * e.ticketPrice), 0);
 
-  // Helper to format currency
+  // Helper to format currency (null-safe)
   const formatIDR = (num) => {
-    if (num >= 1000000000) {
-      return `Rp ${(num / 1000000000).toFixed(1)}B`;
+    const n = Number(num) || 0;
+    if (n >= 1000000000) {
+      return `Rp ${(n / 1000000000).toFixed(1)}B`;
     }
-    if (num >= 1000000) {
-      return `Rp ${(num / 1000000).toFixed(1)}M`;
+    if (n >= 1000000) {
+      return `Rp ${(n / 1000000).toFixed(1)}M`;
     }
-    return `Rp ${num.toLocaleString("id-ID")}`;
+    return `Rp ${n.toLocaleString("id-ID")}`;
   };
 
   // Get color styles based on category config
@@ -766,24 +925,38 @@ export default function Home() {
     }
   };
 
-  // Filtered Events by Search Query
+  // Filtered Events by Search Query (null-safe: category/artist bisa null di DB)
   const filteredEvents = events.filter(ev => {
     const query = searchQuery.toLowerCase();
+    const matchesCategory =
+      eventCategoryFilter === "Semua Kategori" ||
+      String(ev.category || "").toLowerCase() === String(eventCategoryFilter).toLowerCase();
     return (
-      ev.name.toLowerCase().includes(query) ||
-      ev.artist.toLowerCase().includes(query) ||
-      ev.location.toLowerCase().includes(query) ||
-      ev.category.toLowerCase().includes(query)
+      matchesCategory &&
+      (
+        String(ev.name || "").toLowerCase().includes(query) ||
+        String(ev.artist || "").toLowerCase().includes(query) ||
+        String(ev.location || "").toLowerCase().includes(query) ||
+        String(ev.category || "").toLowerCase().includes(query)
+      )
     );
   });
 
-  // Filtered Artists by search and genre dropdown
-  const filteredArtists = artists.filter(art => {
-    const sQuery = searchQuery.toLowerCase();
-    const matchesSearch = art.name.toLowerCase().includes(sQuery) || art.genre.toLowerCase().includes(sQuery);
-    const matchesGenre = artistGenreFilter === "Semua Genre" || art.genre.toUpperCase() === artistGenreFilter.toUpperCase();
-    return matchesSearch && matchesGenre;
-  });
+  // Filtered Artists by search, genre dropdown, and sort (null-safe)
+  const filteredArtists = artists
+    .filter(art => {
+      const sQuery = searchQuery.toLowerCase();
+      const name = String(art.name || "");
+      const genre = String(art.genre || "");
+      const matchesSearch = name.toLowerCase().includes(sQuery) || genre.toLowerCase().includes(sQuery);
+      const matchesGenre = artistGenreFilter === "Semua Genre" || genre.toUpperCase() === artistGenreFilter.toUpperCase();
+      return matchesSearch && matchesGenre;
+    })
+    .sort((a, b) => {
+      if (artistSort === "Nama A-Z") return String(a.name || "").localeCompare(String(b.name || ""));
+      if (artistSort === "Event Terbanyak") return (Number(b.activeEvents) || 0) - (Number(a.activeEvents) || 0);
+      return 0;
+    });
 
   // Filtered Payments by Search Query + status
   const filteredPayments = payments.filter(pay => {
@@ -795,6 +968,23 @@ export default function Home() {
     const matchesStatus = paymentStatusFilter === "SEMUA" || pay.status === paymentStatusFilter;
     return matchesQuery && matchesStatus;
   });
+
+  // Pagination sederhana (8 baris per halaman) — tombol pagination berfungsi sungguhan
+  const ROWS_PER_PAGE = 8;
+  const [eventsPage, setEventsPage] = useState(1);
+  const [paymentsPage, setPaymentsPage] = useState(1);
+  const [categoriesPage, setCategoriesPage] = useState(1);
+
+  const eventsTotalPages = Math.max(1, Math.ceil(filteredEvents.length / ROWS_PER_PAGE));
+  const paymentsTotalPages = Math.max(1, Math.ceil(filteredPayments.length / ROWS_PER_PAGE));
+  const categoriesTotalPages = Math.max(1, Math.ceil(categories.length / ROWS_PER_PAGE));
+  const pagedEvents = filteredEvents.slice((eventsPage - 1) * ROWS_PER_PAGE, eventsPage * ROWS_PER_PAGE);
+  const pagedPayments = filteredPayments.slice((paymentsPage - 1) * ROWS_PER_PAGE, paymentsPage * ROWS_PER_PAGE);
+  const pagedCategories = categories.slice((categoriesPage - 1) * ROWS_PER_PAGE, categoriesPage * ROWS_PER_PAGE);
+
+  useEffect(() => { setEventsPage(1); }, [searchQuery, eventCategoryFilter]);
+  useEffect(() => { setPaymentsPage(1); }, [searchQuery, paymentStatusFilter]);
+  useEffect(() => { setCategoriesPage(1); }, [categories.length]);
 
   // Export pembayaran ke file CSV (bisa dibuka di Excel)
   const handleExportPayments = () => {
@@ -829,7 +1019,7 @@ export default function Home() {
 
   // Custom Artist Avatar Renderers matching the screenshots
   const renderArtistAvatar = (avatarIndex, nameStr) => {
-    const initials = nameStr.substring(0, 2).toUpperCase();
+    const initials = String(nameStr || "?").substring(0, 2).toUpperCase();
     
     // Design variant matching mockup images (neon gradient backgrounds + patterns)
     if (avatarIndex === 0) {
@@ -876,17 +1066,17 @@ export default function Home() {
       
       {/* Toast Notification */}
       {showNotification && (
-        <div className="fixed bottom-6 right-6 z-50 bg-[#141419] border border-[#ff3b70]/50 text-white rounded-2xl px-5 py-4 shadow-2xl shadow-[#ff3b70]/10 flex items-center gap-3.5 animate-slide-up max-w-sm">
+        <div className="fixed bottom-6 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-sm z-50 bg-[#141419] border border-[#ff3b70]/50 text-white rounded-2xl px-5 py-4 shadow-2xl shadow-[#ff3b70]/10 flex items-center gap-3.5 animate-slide-up">
           <div className="w-8 h-8 rounded-full bg-[#ff3b70]/10 flex items-center justify-center text-[#ff3b70] shrink-0 border border-[#ff3b70]/20">
             <Sparkles className="w-4 h-4" />
           </div>
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-0.5 min-w-0">
             <span className="font-semibold text-xs text-white">System Alert</span>
             <span className="text-xs text-[#8b8b9a]">{notificationMsg}</span>
           </div>
           <button 
             onClick={() => setShowNotification(false)}
-            className="text-[#8b8b9a] hover:text-white ml-2 transition-colors"
+            className="text-[#8b8b9a] hover:text-white ml-2 transition-colors shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -931,7 +1121,9 @@ export default function Home() {
 
             <button
               onClick={() => {
-                handleDeleteArtist(selectedArtist.id);
+                if (confirm(`Apakah Anda yakin ingin menghapus artis "${selectedArtist.name}" dari management?`)) {
+                  handleDeleteArtist(selectedArtist.id);
+                }
                 setSelectedArtist(null);
               }}
               className="w-full py-3 bg-[#ff3b70]/10 hover:bg-[#ff3b70]/20 text-[#ff3b70] rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -993,7 +1185,7 @@ export default function Home() {
         <div className="p-4 border-t border-[#26262f]/40">
           {activeTab === "laporan" && (
             <button
-              onClick={() => triggerNotification("Ekspor laporan audit bulanan dikirim ke antrian email...")}
+              onClick={handleExportPayments}
               className="w-full py-3 mb-4 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 flex items-center justify-center gap-2 cursor-pointer transition-all duration-300 hover:scale-[1.01]"
             >
               <Download className="w-4 h-4" />
@@ -1031,7 +1223,7 @@ export default function Home() {
       <div className="flex-1 flex flex-col min-w-0 bg-[#09090b] relative">
         
         {/* Glowing Decorative Element */}
-        <div className="absolute top-0 right-[15%] w-[400px] h-[400px] bg-[#ff3b70]/[0.02] rounded-full blur-[100px] pointer-events-none" />
+        <div className="absolute top-0 right-[15%] w-[280px] md:w-[400px] h-[280px] md:h-[400px] bg-[#ff3b70]/[0.02] rounded-full blur-[100px] pointer-events-none" />
 
         {/* TOP HEADER */}
         <header className="h-[75px] border-b border-[#26262f]/45 px-4 md:px-8 flex items-center justify-between gap-3 shrink-0 bg-[#09090b]/80 backdrop-blur-md sticky top-0 z-30">
@@ -1133,7 +1325,7 @@ export default function Home() {
                   { label: "Total Event", value: totalEventsCount, note: "+4 Bulan ini", icon: CalendarDays, color: "text-[#ff3b70] bg-[#ff3b70]/10" },
                   { label: "Tiket Terjual", value: totalSoldTickets.toLocaleString("id-ID"), note: "+12%", icon: Ticket, color: "text-purple-400 bg-purple-500/10" },
                   { label: "Pendapatan", value: formatIDR(totalRevenue), note: "Gross Volume (YTD)", icon: Wallet, color: "text-teal-400 bg-teal-500/10" },
-                  { label: "Pending Approval", value: stats ? stats.pendingPayments : "12", note: "Butuh Review", icon: Info, color: "text-amber-400 bg-amber-500/10" }
+                  { label: "Pending Approval", value: Number(stats?.pendingPayments) || 0, note: "Butuh Review", icon: Info, color: "text-amber-400 bg-amber-500/10" }
                 ].map((stat, idx) => {
                   const StatIcon = stat.icon;
                   return (
@@ -1173,19 +1365,22 @@ export default function Home() {
                     </div>
 
                     <div className="flex flex-col gap-5">
-                      {events.slice(0, 2).map((ev) => {
+                      {[...events]
+                        .sort((a, b) => (Number(b.sold) || 0) - (Number(a.sold) || 0))
+                        .slice(0, 2)
+                        .map((ev) => {
                         const evQuota = Number(ev.quota) || 0;
                         const evSold = Number(ev.sold) || 0;
                         const occupancyPercent = evQuota > 0 ? Math.round((evSold / evQuota) * 100) : 0;
                         return (
                           <div key={ev.id} className="flex flex-col gap-2">
                             <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 min-w-0">
                                 <div className="w-10 h-10 rounded-lg bg-[#0d0d10] border border-[#26262f] flex items-center justify-center text-xs font-bold text-[#ff3b70] shrink-0">
                                   {(ev.name || "?").substring(0, 2).toUpperCase()}
                                 </div>
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-bold text-white leading-snug">{ev.name}</span>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-sm font-bold text-white leading-snug truncate">{ev.name}</span>
                                   <span className="text-[11px] text-[#8b8b9a] mt-0.5 leading-none flex items-center gap-1">
                                     <MapPin className="w-3 h-3 text-[#ff3b70]" />
                                     {(ev.location || "").split(",")[0]}
@@ -1215,26 +1410,23 @@ export default function Home() {
                   <h3 className="text-base font-semibold text-white tracking-wide mb-6">Aktivitas Terakhir</h3>
                   
                   <div className="flex flex-col gap-5">
-                    {(activity.length === 0 ? [
-                      { user: "Budi Santoso", action: "membeli 2 tiket", item: "Rock Anthem", time: "2 menit lalu", color: "bg-[#ff3b70]/15 text-[#ff3b70]" },
-                      { user: "Pendaftaran artis baru", action: ":", item: "The Midnight Sun", time: "15 menit lalu", color: "bg-purple-500/15 text-purple-400" },
-                      { user: "Event Art Tech Expo", action: "telah disetujui", item: "", time: "1 jam lalu", color: "bg-teal-500/15 text-teal-400" }
-                    ] : activity.map((log) => {
+                    {(activity.length === 0 ? [] : activity.map((log) => {
                       const actionMap = {
-                        PURCHASE: { action: "membeli tiket", item: log.details, color: "bg-[#ff3b70]/15 text-[#ff3b70]" },
-                        ARTIST_REGISTER: { action: "mendaftarkan artis", item: log.details, color: "bg-purple-500/15 text-purple-400" },
-                        EVENT_APPROVED: { action: "menyetujui event", item: log.details, color: "bg-teal-500/15 text-teal-400" },
-                        PAYMENT_VERIFIED: { action: "memverifikasi pembayaran", item: log.details, color: "bg-amber-500/15 text-amber-400" }
+                        PURCHASE: { action: "membeli tiket", item: log.description, color: "bg-[#ff3b70]/15 text-[#ff3b70]" },
+                        ARTIST_REGISTER: { action: "mendaftarkan artis", item: log.description, color: "bg-purple-500/15 text-purple-400" },
+                        EVENT_APPROVED: { action: "menyetujui event", item: log.description, color: "bg-teal-500/15 text-teal-400" },
+                        PAYMENT_VERIFIED: { action: "memverifikasi pembayaran", item: log.description, color: "bg-amber-500/15 text-amber-400" },
+                        PAYMENT_REJECTED: { action: "membatalkan pembayaran", item: log.description, color: "bg-red-500/15 text-red-400" }
                       };
-                      const act = actionMap[log.action_type] || { action: log.action_type, item: log.details, color: "bg-zinc-500/15 text-zinc-400" };
+                      const act = actionMap[log.action_type] || { action: log.action_type, item: log.description, color: "bg-zinc-500/15 text-zinc-400" };
                       let time = "";
                       try {
-                        const then = new Date(log.created_at);
+                        const then = new Date(log.createdAt);
                         if (!isNaN(then.getTime())) {
                           time = then.toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
                         }
                       } catch (err) { time = ""; }
-                      return { user: log.user || "System", ...act, time, color: act.color };
+                      return { user: log.user_name || "System", ...act, time, color: act.color };
                     })).map((act, idx) => (
                       <div key={idx} className="flex items-start gap-4">
                         <div className={`w-8.5 h-8.5 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${act.color}`}>
@@ -1249,6 +1441,9 @@ export default function Home() {
                         </div>
                       </div>
                     ))}
+                    {activity.length === 0 && (
+                      <p className="text-xs text-[#50505f] text-center py-4">Belum ada aktivitas tercatat.</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1268,12 +1463,16 @@ export default function Home() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="relative">
-                        <select className="bg-[#141419] border border-[#26262f] text-xs text-white py-3 px-4.5 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer pr-10 font-semibold tracking-wide">
+                    <div className="flex flex-wrap items-center gap-3 shrink-0">
+                      <div className="relative flex-1 min-w-[160px] sm:flex-none">
+                        <select
+                          value={eventCategoryFilter}
+                          onChange={(e) => setEventCategoryFilter(e.target.value)}
+                          className="w-full bg-[#141419] border border-[#26262f] text-xs text-white py-3 px-4.5 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer pr-10 font-semibold tracking-wide"
+                        >
                           <option>Semua Kategori</option>
                           {categories.map(cat => (
-                            <option key={cat.id}>{cat.name}</option>
+                            <option key={cat.id} value={cat.name}>{cat.name}</option>
                           ))}
                         </select>
                         <ChevronRight className="w-4 h-4 text-[#8b8b9a] absolute right-3.5 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" />
@@ -1281,7 +1480,7 @@ export default function Home() {
 
                       <button
                         onClick={() => { setEventSubView("add"); setEditingEventId(null); }}
-                        className="py-3 px-4.5 bg-[#fecdd3] hover:bg-[#fda4af] text-[#4c0519] rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-[#ff3b70]/10 hover:scale-[1.01]"
+                        className="flex-1 sm:flex-none py-3 px-4.5 bg-[#fecdd3] hover:bg-[#fda4af] text-[#4c0519] rounded-xl text-xs font-extrabold transition-all flex items-center gap-2 cursor-pointer shadow-lg shadow-[#ff3b70]/10 hover:scale-[1.01]"
                       >
                         <Plus className="w-4.5 h-4.5 stroke-[3]" />
                         <span>Tambah Event Baru</span>
@@ -1302,14 +1501,14 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#26262f]/50">
-                          {filteredEvents.length === 0 ? (
+                          {pagedEvents.length === 0 ? (
                             <tr>
                               <td colSpan="5" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
                                 Tidak ada event yang cocok dengan pencarian Anda.
                               </td>
                             </tr>
                           ) : (
-                            filteredEvents.map((ev) => {
+                            pagedEvents.map((ev) => {
                               const evQuota = Number(ev.quota) || 0;
                               const evSold = Number(ev.sold) || 0;
                               const occupancyPercent = evQuota > 0 ? Math.round((evSold / evQuota) * 100) : 0;
@@ -1346,7 +1545,16 @@ export default function Home() {
                                   <td className="py-5 px-6">
                                     <div className="flex flex-col gap-0.5">
                                       <span className="text-xs font-semibold text-white font-mono">
-                                        {new Date(ev.date).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
+                                        {(() => {
+                                          try {
+                                            const d = new Date(ev.date);
+                                            return isNaN(d.getTime())
+                                              ? (ev.date || "-")
+                                              : d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
+                                          } catch (err) {
+                                            return ev.date || "-";
+                                          }
+                                        })()}
                                       </span>
                                       <span className="text-[10px] text-[#ff3b70] truncate max-w-[150px] font-medium">
                                         {(ev.location || "").split(",")[0]}
@@ -1398,8 +1606,9 @@ export default function Home() {
                                             quota: Number(ev.quota) || 5000,
                                             location: ev.location || "",
                                             description: ev.description || "",
-                                            poster: null,
-                                            banner: null
+                                            status: ev.status || "ACTIVE",
+                                            poster: ev.poster || null,
+                                            banner: ev.banner || null
                                           });
                                           setEditingEventId(ev.id);
                                           setEventSubView("add");
@@ -1426,25 +1635,42 @@ export default function Home() {
                       </table>
                     </div>
 
-                    <div className="p-5 border-t border-[#26262f]/60 flex items-center justify-between text-xs font-semibold text-[#8b8b9a]">
-                      <span>Menampilkan 1-{filteredEvents.length} dari {filteredEvents.length} event</span>
-                      <div className="flex items-center gap-1.5">
-                        <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                          <ChevronLeft className="w-3.5 h-3.5" />
-                        </button>
-                        <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white font-bold">
-                          1
-                        </button>
-                        <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all">
-                          2
-                        </button>
-                        <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all">
-                          3
-                        </button>
-                        <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    <div className="p-5 border-t border-[#26262f]/60 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-[#8b8b9a]">
+                      <span>
+                        Menampilkan {filteredEvents.length === 0 ? 0 : (eventsPage - 1) * ROWS_PER_PAGE + 1}-
+                        {Math.min(eventsPage * ROWS_PER_PAGE, filteredEvents.length)} dari {filteredEvents.length} event
+                      </span>
+                      {eventsTotalPages > 1 && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            disabled={eventsPage <= 1}
+                            onClick={() => setEventsPage((p) => Math.max(1, p - 1))}
+                            className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                          {Array.from({ length: eventsTotalPages }, (_, i) => i + 1).map((pg) => (
+                            <button
+                              key={pg}
+                              onClick={() => setEventsPage(pg)}
+                              className={`w-8 h-8 rounded-lg flex items-center justify-center border font-bold transition-all cursor-pointer ${
+                                pg === eventsPage
+                                  ? "border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white"
+                                  : "border border-[#26262f] bg-[#0d0d10]/40 hover:text-white"
+                              }`}
+                            >
+                              {pg}
+                            </button>
+                          ))}
+                          <button
+                            disabled={eventsPage >= eventsTotalPages}
+                            onClick={() => setEventsPage((p) => Math.min(eventsTotalPages, p + 1))}
+                            className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1473,7 +1699,7 @@ export default function Home() {
                         <span className="text-2xl font-extrabold text-white mt-1.5 block font-mono">
                           {activeEventsCount < 10 ? `0${activeEventsCount}` : activeEventsCount}
                         </span>
-                        <span className="text-[10px] text-[#8b8b9a] font-semibold mt-1 block">Hingga Desember 2024</span>
+                        <span className="text-[10px] text-[#8b8b9a] font-semibold mt-1 block">Event berstatus aktif saat ini</span>
                       </div>
                       <CalendarDays className="w-12 h-12 text-[#26262f] absolute right-4 top-1/2 -translate-y-1/2 opacity-20 shrink-0" />
                     </div>
@@ -1483,7 +1709,7 @@ export default function Home() {
 
               {eventSubView === "add" && (
                 <div className="flex flex-col gap-8">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
                       <h1 className="text-3xl font-extrabold tracking-tight text-white">
                         {editingEventId ? "Edit Event" : "Add New Event"}
@@ -1493,16 +1719,16 @@ export default function Home() {
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
                       <button
                         onClick={() => { setEventSubView("list"); setEditingEventId(null); }}
-                        className="py-3 px-6 bg-transparent border border-[#26262f] hover:border-white/20 text-[#f4f4f5] rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        className="flex-1 sm:flex-none py-3 px-6 bg-transparent border border-[#26262f] hover:border-white/20 text-[#f4f4f5] rounded-xl text-xs font-bold transition-all cursor-pointer"
                       >
                         Batal
                       </button>
                       <button
                         onClick={handleSaveEvent}
-                        className="py-3 px-6 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                        className="flex-1 sm:flex-none py-3 px-6 rounded-xl text-white font-bold text-xs gradient-btn shadow-lg shadow-[#ff3b70]/20 hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
                       >
                         {editingEventId ? "Simpan Perubahan" : "Simpan Event"}
                       </button>
@@ -1674,16 +1900,22 @@ export default function Home() {
                         </div>
 
                         <div 
-                          onClick={() => triggerNotification("Mockupload Poster berhasil.")}
+                          onClick={() => handleFileUpload("poster")}
                           className="border border-dashed border-[#ff3b70]/20 hover:border-[#ff3b70]/50 bg-[#0d0d10] rounded-xl p-8 flex flex-col items-center justify-center text-center gap-3 cursor-pointer transition-all duration-300 min-h-[220px]"
                         >
                           <div className="w-10 h-10 rounded-full bg-[#ff3b70]/10 flex items-center justify-center text-[#ff3b70] border border-[#ff3b70]/20">
                             <Upload className="w-4.5 h-4.5" />
                           </div>
                           <div>
-                            <p className="text-xs text-white font-bold leading-normal">Click to upload or drag & drop</p>
+                            <p className="text-xs text-white font-bold leading-normal">
+                              {eventForm.poster ? "Ganti poster (klik untuk unggah ulang)" : "Click to upload or drag & drop"}
+                            </p>
                             <p className="text-[10px] text-[#8b8b9a] mt-1 leading-normal">High resolution PNG, JPG, or WebP (Max 5MB)</p>
                           </div>
+                          {eventForm.poster && (
+                            <img src={eventForm.poster} alt="Poster preview" className="w-full h-32 object-cover rounded-lg" />
+                          )}
+                          <input type="file" accept="image/*" className="hidden" ref={posterInputRef} onChange={(e) => uploadFile(e, "poster")} />
                         </div>
                       </div>
 
@@ -1696,16 +1928,22 @@ export default function Home() {
                         </div>
 
                         <div 
-                          onClick={() => triggerNotification("Mockupload Banner berhasil.")}
+                          onClick={() => handleFileUpload("banner")}
                           className="border border-dashed border-[#ff3b70]/20 hover:border-[#ff3b70]/50 bg-[#0d0d10] rounded-xl p-6 flex flex-col items-center justify-center text-center gap-2.5 cursor-pointer transition-all duration-300 min-h-[140px]"
                         >
                           <div className="w-9 h-9 rounded-full bg-[#ff3b70]/10 flex items-center justify-center text-[#ff3b70] border border-[#ff3b70]/20">
                             <Upload className="w-4 h-4" />
                           </div>
                           <div>
-                            <p className="text-xs text-white font-bold leading-normal">Upload Banner</p>
+                            <p className="text-xs text-white font-bold leading-normal">
+                              {eventForm.banner ? "Ganti banner (klik untuk unggah ulang)" : "Upload Banner"}
+                            </p>
                             <p className="text-[10px] text-[#8b8b9a] mt-1 leading-none">Recommended 1920x820px</p>
                           </div>
+                          {eventForm.banner && (
+                            <img src={eventForm.banner} alt="Banner preview" className="w-full h-20 object-cover rounded-lg" />
+                          )}
+                          <input type="file" accept="image/*" className="hidden" ref={bannerInputRef} onChange={(e) => uploadFile(e, "banner")} />
                         </div>
                       </div>
 
@@ -1888,7 +2126,7 @@ export default function Home() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#26262f]/50">
-                        {categories.map((cat) => {
+                        {pagedCategories.map((cat) => {
                           const linkedEventCount = events.filter(ev => ev.category === cat.name).length;
                           return (
                             <tr key={cat.id} className="hover:bg-[#181822]/40 transition-colors">
@@ -1936,19 +2174,42 @@ export default function Home() {
                     </table>
                   </div>
 
-                  <div className="p-4 border-t border-[#26262f]/60 flex items-center justify-between text-[11px] font-semibold text-[#8b8b9a]">
-                    <span>Showing 1-{categories.length} of {categories.length} categories</span>
-                    <div className="flex items-center gap-1.5">
-                      <button className="p-1.5 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                        <ChevronLeft className="w-3 h-3" />
-                      </button>
-                      <button className="w-6.5 h-6.5 rounded-lg flex items-center justify-center border border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white font-bold">
-                        1
-                      </button>
-                      <button className="p-1.5 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    </div>
+                  <div className="p-4 border-t border-[#26262f]/60 flex flex-wrap items-center justify-between gap-3 text-[11px] font-semibold text-[#8b8b9a]">
+                    <span>
+                      Showing {categories.length === 0 ? 0 : (categoriesPage - 1) * ROWS_PER_PAGE + 1}-
+                      {Math.min(categoriesPage * ROWS_PER_PAGE, categories.length)} of {categories.length} categories
+                    </span>
+                    {categoriesTotalPages > 1 && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          disabled={categoriesPage <= 1}
+                          onClick={() => setCategoriesPage((p) => Math.max(1, p - 1))}
+                          className="p-1.5 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                        >
+                          <ChevronLeft className="w-3 h-3" />
+                        </button>
+                        {Array.from({ length: categoriesTotalPages }, (_, i) => i + 1).map((pg) => (
+                          <button
+                            key={pg}
+                            onClick={() => setCategoriesPage(pg)}
+                            className={`w-6.5 h-6.5 rounded-lg flex items-center justify-center border font-bold transition-all cursor-pointer ${
+                              pg === categoriesPage
+                                ? "border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white"
+                                : "border-[#26262f] bg-[#0d0d10]/40 hover:text-white"
+                            }`}
+                          >
+                            {pg}
+                          </button>
+                        ))}
+                        <button
+                          disabled={categoriesPage >= categoriesTotalPages}
+                          onClick={() => setCategoriesPage((p) => Math.min(categoriesTotalPages, p + 1))}
+                          className="p-1.5 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                        >
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                 </div>
@@ -1996,7 +2257,7 @@ export default function Home() {
                     </div>
 
                     {/* Filter controls */}
-                    <div className="flex gap-3 text-xs font-semibold shrink-0">
+                    <div className="flex flex-wrap gap-3 text-xs font-semibold">
                       <div className="flex items-center gap-2">
                         <span className="text-[#8b8b9a]">Filter:</span>
                         <div className="relative">
@@ -2006,9 +2267,9 @@ export default function Home() {
                             onChange={(e) => setArtistGenreFilter(e.target.value)}
                           >
                             <option>Semua Genre</option>
-                            <option>Synthwave</option>
-                            <option>Indie Rock</option>
-                            <option>Jazz Fusion</option>
+                            {[...new Set(artists.map((a) => (a.genre || "Synthwave").toUpperCase()))].map((g) => (
+                              <option key={g}>{g.charAt(0) + g.slice(1).toLowerCase()}</option>
+                            ))}
                           </select>
                           <ChevronRight className="w-4 h-4 text-[#8b8b9a] absolute right-3 top-1/2 -translate-y-1/2 rotate-90 pointer-events-none" />
                         </div>
@@ -2017,7 +2278,11 @@ export default function Home() {
                       <div className="flex items-center gap-2">
                         <span className="text-[#8b8b9a]">Urutkan:</span>
                         <div className="relative">
-                          <select className="bg-[#0d0d10] border border-[#26262f] text-white py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer">
+                          <select
+                            value={artistSort}
+                            onChange={(e) => setArtistSort(e.target.value)}
+                            className="bg-[#0d0d10] border border-[#26262f] text-white py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer"
+                          >
                             <option>Terbaru</option>
                             <option>Nama A-Z</option>
                             <option>Event Terbanyak</option>
@@ -2056,7 +2321,9 @@ export default function Home() {
                         <div className="w-full flex items-center justify-between border-t border-[#26262f]/45 pt-4 mt-1">
                           <div className="flex flex-col text-left gap-0.5">
                             <span className="text-[8px] text-[#8b8b9a] font-bold tracking-wider uppercase">Event Aktif</span>
-                            <span className="text-sm font-bold text-white font-mono">{art.activeEvents < 10 ? `0${art.activeEvents}` : art.activeEvents}</span>
+                            <span className="text-sm font-bold text-white font-mono">
+                              {(() => { const n = Number(art.activeEvents) || 0; return n < 10 ? `0${n}` : n; })()}
+                            </span>
                           </div>
                           <button
                             onClick={() => setSelectedArtist(art)}
@@ -2228,7 +2495,7 @@ export default function Home() {
                   </div>
                   <div className="flex flex-col">
                     <span className="text-2xl font-extrabold text-white font-mono leading-none">
-                      {(stats ? stats.totalPayments : 1240).toLocaleString("id-ID")}
+                      {(Number(stats?.totalPayments) || payments.length).toLocaleString("id-ID")}
                     </span>
                     <span className="text-[9px] text-[#8b8b9a] mt-2 font-medium">Akun terdaftar melakukan checkout</span>
                   </div>
@@ -2238,16 +2505,16 @@ export default function Home() {
               {/* Payments Table card */}
               <div className="bg-[#141419] border border-[#26262f] rounded-2xl glow-card overflow-hidden">
                 
-                <div className="p-6 border-b border-[#26262f]/45 flex items-center justify-between">
+                <div className="p-6 border-b border-[#26262f]/45 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <span className="text-xs font-bold tracking-wider text-white uppercase flex items-center gap-2">
                     <CreditCard className="w-4.5 h-4.5 text-[#ff3b70]" /> Riwayat Pembayaran
                   </span>
-                  <div className="flex gap-2">
-                    <div className="relative">
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                    <div className="relative flex-1 sm:flex-none">
                       <select
                         value={paymentStatusFilter}
                         onChange={(e) => setPaymentStatusFilter(e.target.value)}
-                        className="appearance-none py-2 pl-3 pr-9 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl cursor-pointer transition-colors focus:outline-none focus:border-[#ff3b70]/40"
+                        className="appearance-none w-full py-2 pl-3 pr-9 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl cursor-pointer transition-colors focus:outline-none focus:border-[#ff3b70]/40"
                       >
                         <option value="SEMUA">Semua Status</option>
                         <option value="PENDING">PENDING</option>
@@ -2258,7 +2525,7 @@ export default function Home() {
                     </div>
                     <button 
                       onClick={handleExportPayments}
-                      className="py-2 px-3.5 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
+                      className="flex-1 sm:flex-none py-2 px-3.5 bg-[#0d0d10] border border-[#26262f] text-xs font-semibold text-[#8b8b9a] hover:text-white rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors justify-center"
                     >
                       <Upload className="w-3.5 h-3.5 rotate-180" />
                       <span>Export Log</span>
@@ -2279,15 +2546,15 @@ export default function Home() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#26262f]/50">
-                      {filteredPayments.length === 0 ? (
+                      {pagedPayments.length === 0 ? (
                         <tr>
                           <td colSpan="6" className="py-12 text-center text-xs text-[#8b8b9a] font-semibold">
                             Tidak ada transaksi pembayaran dalam daftar.
                           </td>
                         </tr>
                       ) : (
-                        filteredPayments.map((pay) => {
-                          let payStatusClass = "";
+                        pagedPayments.map((pay) => {
+                          let payStatusClass = "border-zinc-500/30 bg-zinc-500/5 text-zinc-400";
                           switch (pay.status) {
                             case "PAID": payStatusClass = "border-emerald-500/35 bg-emerald-500/5 text-emerald-400"; break;
                             case "PENDING": payStatusClass = "border-amber-500/35 bg-amber-500/5 text-amber-400"; break;
@@ -2304,7 +2571,7 @@ export default function Home() {
                               {/* User Name with avatar */}
                               <td className="py-5 px-6">
                                 <div className="flex items-center gap-3">
-                                  <div className="w-7 h-7 rounded-full bg-[#18181f] border border-[#26262f] flex items-center justify-center text-[10px] font-bold text-white text-indigo-400">
+                                  <div className="w-7 h-7 rounded-full bg-[#18181f] border border-[#26262f] flex items-center justify-center text-[10px] font-bold text-indigo-400">
                                     {pay.avatar}
                                   </div>
                                   <span className="text-xs font-bold text-white">{pay.user}</span>
@@ -2360,19 +2627,42 @@ export default function Home() {
                 </div>
 
                 {/* Pagination */}
-                <div className="p-5 border-t border-[#26262f]/60 flex items-center justify-between text-xs font-semibold text-[#8b8b9a]">
-                  <span>Showing 1-{filteredPayments.length} of {filteredPayments.length} entries</span>
-                  <div className="flex items-center gap-1.5">
-                    <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    </button>
-                    <button className="w-8 h-8 rounded-lg flex items-center justify-center border border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white font-bold">
-                      1
-                    </button>
-                    <button className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer">
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                <div className="p-5 border-t border-[#26262f]/60 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-[#8b8b9a]">
+                  <span>
+                    Showing {filteredPayments.length === 0 ? 0 : (paymentsPage - 1) * ROWS_PER_PAGE + 1}-
+                    {Math.min(paymentsPage * ROWS_PER_PAGE, filteredPayments.length)} of {filteredPayments.length} entries
+                  </span>
+                  {paymentsTotalPages > 1 && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        disabled={paymentsPage <= 1}
+                        onClick={() => setPaymentsPage((p) => Math.max(1, p - 1))}
+                        className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </button>
+                      {Array.from({ length: paymentsTotalPages }, (_, i) => i + 1).map((pg) => (
+                        <button
+                          key={pg}
+                          onClick={() => setPaymentsPage(pg)}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center border font-bold transition-all cursor-pointer ${
+                            pg === paymentsPage
+                              ? "border-[#ff3b70]/30 bg-[#ff3b70]/10 text-white"
+                              : "border-[#26262f] bg-[#0d0d10]/40 hover:text-white"
+                          }`}
+                        >
+                          {pg}
+                        </button>
+                      ))}
+                      <button
+                        disabled={paymentsPage >= paymentsTotalPages}
+                        onClick={() => setPaymentsPage((p) => Math.min(paymentsTotalPages, p + 1))}
+                        className="p-2 rounded-lg border border-[#26262f] bg-[#0d0d10]/40 hover:text-white transition-all cursor-pointer disabled:opacity-30"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -2380,7 +2670,62 @@ export default function Home() {
           )}
 
           {/* ==================== F. REPORTS VIEW (NEWLY ADDED PAGE) ==================== */}
-          {activeTab === "laporan" && (
+          {/* ==================== F. LAPORAN VIEW (DATA NYATA) ==================== */}
+          {(() => {
+            // Data laporan dihitung dari events & payments yang sudah dimuat (bukan mock)
+            // Filter sesuai rentang waktu terpilih
+            const rangeDays = reportRange === "Terakhir 7 Hari" ? 7 : reportRange === "Terakhir 90 Hari" ? 90 : 30;
+            const rangeCutoff = Date.now() - rangeDays * 24 * 60 * 60 * 1000;
+            const reportEvents = events
+              .filter((e) => e.status !== "DRAFT")
+              .filter((e) => {
+                if (!e.date) return true;
+                const d = new Date(e.date);
+                return isNaN(d.getTime()) ? true : d.getTime() >= rangeCutoff;
+              })
+              .map((e) => ({
+                name: e.name,
+                sold: `${Number(e.sold) || 0} / ${Number(e.quota) || 0}`,
+                soldPct: Number(e.quota) ? Math.min(100, Math.round(((Number(e.sold) || 0) / Number(e.quota)) * 100)) : 0,
+                avg: Number(e.ticketPrice) || 0,
+                revenue: (Number(e.sold) || 0) * (Number(e.ticketPrice) || 0)
+              }))
+              .sort((a, b) => b.revenue - a.revenue);
+            const topSales = reportEvents.filter((e) => e.soldPct > 0).slice(0, 6);
+
+            const genreCounts = {};
+            events.forEach((e) => {
+              if (e.status === "DRAFT") return;
+              const g = String(e.category || "Lainnya").trim() || "Lainnya";
+              genreCounts[g] = (genreCounts[g] || 0) + 1;
+            });
+            const genreEntries = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]);
+            const totalGenres = genreEntries.reduce((s, [, c]) => s + c, 0) || 1;
+            const GENRE_COLORS = ["#ff3b70", "#8b5cf6", "#06b6d4", "#fb923c", "#d946ef", "#10b981", "#f59e0b"];
+            const genreSegments = genreEntries.map(([name, count], i) => ({
+              name,
+              count,
+              pct: Math.round((count / totalGenres) * 100),
+              color: GENRE_COLORS[i % GENRE_COLORS.length]
+            }));
+            const circumference = 2 * Math.PI * 50;
+            let accOffset = 0;
+            const donutCircles = genreSegments.map((seg, i) => {
+              const dash = (seg.count / totalGenres) * circumference;
+              const circle = (
+                <circle
+                  key={i} cx="75" cy="75" r="50" fill="transparent" stroke={seg.color} strokeWidth="16"
+                  strokeDasharray={`${dash} ${circumference}`} strokeDashoffset={-accOffset}
+                  className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
+                  onMouseEnter={() => setHoveredDonutSegment(`${seg.name} (${seg.pct}%)`)}
+                  onMouseLeave={() => setHoveredDonutSegment(null)}
+                />
+              );
+              accOffset += dash;
+              return circle;
+            });
+
+            return (
             <div className="flex flex-col gap-8 animate-fade-in">
               {/* Header Title */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -2388,10 +2733,14 @@ export default function Home() {
                   <h1 className="text-3xl font-extrabold tracking-tight text-white">Laporan Penjualan</h1>
                   <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">Analisis data transaksi dan performa penjualan tiket.</p>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex flex-wrap items-center gap-3">
                   {/* Select timeline */}
                   <div className="relative">
-                    <select className="bg-[#141419] border border-[#26262f] text-xs text-white py-3 pl-4 pr-10 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer font-semibold tracking-wide">
+                    <select
+                      value={reportRange}
+                      onChange={(e) => setReportRange(e.target.value)}
+                      className="bg-[#141419] border border-[#26262f] text-xs text-white py-3 pl-4 pr-10 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer font-semibold tracking-wide"
+                    >
                       <option>Terakhir 30 Hari</option>
                       <option>Terakhir 7 Hari</option>
                       <option>Terakhir 90 Hari</option>
@@ -2400,7 +2749,7 @@ export default function Home() {
                   </div>
                   {/* Export button */}
                   <button 
-                    onClick={() => triggerNotification("Proses ekspor file CSV dimulai...")}
+                    onClick={handleExportPayments}
                     className="py-3 px-4.5 bg-[#fecdd3] hover:bg-[#fda4af] text-[#4c0519] rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[#ff3b70]/10 hover:scale-[1.01]"
                   >
                     <Upload className="w-4.5 h-4.5 rotate-180" />
@@ -2434,12 +2783,10 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#26262f]/40">
-                          {[
-                            { name: "Born Pink World Tour", sold: "12,450 / 15,000", avg: 1250000, revenue: 15560000000 },
-                            { name: "The Eras Festival", sold: "8,900 / 10,000", avg: 950000, revenue: 8450000000 },
-                            { name: "Jazz Under the Stars", sold: "2,100 / 2,500", avg: 450000, revenue: 945000000 },
-                            { name: "Rock Night: Rebirth", sold: "4,500 / 5,000", avg: 350000, revenue: 1570000000 }
-                          ].map((row, index) => (
+                          {reportEvents.length === 0 && (
+                            <tr><td colSpan="4" className="py-6 text-center text-[#50505f]">Belum ada data event.</td></tr>
+                          )}
+                          {reportEvents.map((row, index) => (
                             <tr key={index} className="hover:bg-[#181822]/20 transition-colors">
                               <td className="py-4 px-1 font-bold text-white">{row.name}</td>
                               <td className="py-4 px-3 font-mono font-semibold text-[#8b8b9a]">{row.sold}</td>
@@ -2461,74 +2808,16 @@ export default function Home() {
                     {/* SVG Donut Chart container */}
                     <div className="relative flex items-center justify-center py-4">
                       <svg viewBox="0 0 150 150" className="w-44 h-44 overflow-visible rotate-[-90deg]">
-                        {/* Donut sectors calculation using strokeDasharray/strokeDashoffset */}
-                        {/* Total circumference = 314.16 */}
-                        {/* Pop (40%): color #ff3b70 */}
-                        <circle
-                          cx="75" cy="75" r="50"
-                          fill="transparent"
-                          stroke="#ff3b70"
-                          strokeWidth="16"
-                          strokeDasharray="125.66 314.16"
-                          strokeDashoffset="0"
-                          className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
-                          onMouseEnter={() => setHoveredDonutSegment("Pop (40%)")}
-                          onMouseLeave={() => setHoveredDonutSegment(null)}
-                        />
-                        {/* Rock (25%): color #8b5cf6 */}
-                        <circle
-                          cx="75" cy="75" r="50"
-                          fill="transparent"
-                          stroke="#8b5cf6"
-                          strokeWidth="16"
-                          strokeDasharray="78.54 314.16"
-                          strokeDashoffset="-125.66"
-                          className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
-                          onMouseEnter={() => setHoveredDonutSegment("Rock (25%)")}
-                          onMouseLeave={() => setHoveredDonutSegment(null)}
-                        />
-                        {/* Jazz (15%): color #06b6d4 */}
-                        <circle
-                          cx="75" cy="75" r="50"
-                          fill="transparent"
-                          stroke="#06b6d4"
-                          strokeWidth="16"
-                          strokeDasharray="47.12 314.16"
-                          strokeDashoffset="-204.2"
-                          className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
-                          onMouseEnter={() => setHoveredDonutSegment("Jazz (15%)")}
-                          onMouseLeave={() => setHoveredDonutSegment(null)}
-                        />
-                        {/* Indie (10%): color #fb923c */}
-                        <circle
-                          cx="75" cy="75" r="50"
-                          fill="transparent"
-                          stroke="#fb923c"
-                          strokeWidth="16"
-                          strokeDasharray="31.42 314.16"
-                          strokeDashoffset="-251.32"
-                          className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
-                          onMouseEnter={() => setHoveredDonutSegment("Indie (10%)")}
-                          onMouseLeave={() => setHoveredDonutSegment(null)}
-                        />
-                        {/* Festival (10%): color #d946ef */}
-                        <circle
-                          cx="75" cy="75" r="50"
-                          fill="transparent"
-                          stroke="#d946ef"
-                          strokeWidth="16"
-                          strokeDasharray="31.42 314.16"
-                          strokeDashoffset="-282.74"
-                          className="transition-all duration-300 cursor-pointer hover:stroke-width-[18]"
-                          onMouseEnter={() => setHoveredDonutSegment("Festival (10%)")}
-                          onMouseLeave={() => setHoveredDonutSegment(null)}
-                        />
+                        {donutCircles.length === 0 && (
+                          <circle cx="75" cy="75" r="50" fill="none" stroke="#26262f" strokeWidth="16" />
+                        )}
+                        {donutCircles}
                       </svg>
 
                       {/* Donut Center Label */}
                       <div className="absolute flex flex-col items-center justify-center text-center">
-                        <span className="text-xl font-extrabold text-white leading-none">100%</span>
-                        <span className="text-[9px] text-[#8b8b9a] font-bold tracking-wider uppercase mt-1">Total Share</span>
+                        <span className="text-xl font-extrabold text-white leading-none">{totalGenres}</span>
+                        <span className="text-[9px] text-[#8b8b9a] font-bold tracking-wider uppercase mt-1">Kategori</span>
                       </div>
                     </div>
 
@@ -2541,26 +2830,15 @@ export default function Home() {
 
                     {/* Donut Legend */}
                     <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-[10px] font-semibold text-[#8b8b9a] border-t border-[#26262f]/45 pt-4 mt-4">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded bg-[#ff3b70] shrink-0" />
-                        <span>Pop (40%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded bg-[#8b5cf6] shrink-0" />
-                        <span>Rock (25%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded bg-[#06b6d4] shrink-0" />
-                        <span>Jazz (15%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded bg-[#fb923c] shrink-0" />
-                        <span>Indie (10%)</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded bg-[#d946ef] shrink-0" />
-                        <span>Festival (10%)</span>
-                      </div>
+                      {genreSegments.length === 0 && (
+                        <span className="text-[#50505f]">Belum ada kategori.</span>
+                      )}
+                      {genreSegments.map((seg, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded shrink-0" style={{ backgroundColor: seg.color }} />
+                          <span>{seg.name} ({seg.pct}%)</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -2572,23 +2850,20 @@ export default function Home() {
                 <h3 className="text-base font-semibold text-white tracking-wide mb-6">Ticket Sales Progress</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
-                  {[
-                    { name: "Born Pink World Tour", sold: 85 },
-                    { name: "The Eras Festival", sold: 89 },
-                    { name: "Rock Night: Rebirth", sold: 90 },
-                    { name: "Jazz Under the Stars", sold: 84 },
-                    { name: "Indie Vibes Bandung", sold: 72 }
-                  ].map((bar, idx) => (
+                  {topSales.length === 0 && (
+                    <p className="text-xs text-[#50505f] md:col-span-2">Belum ada penjualan tiket.</p>
+                  )}
+                  {topSales.map((bar, idx) => (
                     <div key={idx} className="flex flex-col gap-2">
                       <div className="flex justify-between items-center text-xs font-semibold leading-none">
                         <span className="text-[#8b8b9a]">{bar.name}</span>
-                        <span className="text-white font-mono font-bold">{bar.sold}% Sold</span>
+                        <span className="text-white font-mono font-bold">{bar.soldPct}% Sold</span>
                       </div>
                       {/* Meter bar */}
                       <div className="w-full h-2 bg-[#09090b] rounded-full overflow-hidden border border-[#26262f]/35">
                         <div 
                           className="h-full bg-gradient-to-r from-[#ff3b70] to-[#8b5cf6] rounded-full transition-all duration-500"
-                          style={{ width: `${bar.sold}%` }}
+                          style={{ width: `${bar.soldPct}%` }}
                         />
                       </div>
                     </div>
@@ -2596,7 +2871,8 @@ export default function Home() {
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ==================== G. PROFILE VIEW (PROFIL ADMIN) ==================== */}
           {activeTab === "profil" && (
@@ -2633,14 +2909,15 @@ export default function Home() {
                     </div>
 
                     <form 
-                      onSubmit={(e) => { e.preventDefault(); triggerNotification("Profil admin berhasil diperbarui!"); }} 
+                      onSubmit={handleSaveAdminProfile}
                       className="grid grid-cols-1 md:grid-cols-2 gap-5"
                     >
                       <div className="flex flex-col gap-2">
                         <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Nama Lengkap</label>
                         <input
                           type="text"
-                          defaultValue={adminUser?.name || "Admin User"}
+                          value={adminProfileName}
+                          onChange={(e) => setAdminProfileName(e.target.value)}
                           className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
                         />
                       </div>
@@ -2649,7 +2926,8 @@ export default function Home() {
                         <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Email</label>
                         <input
                           type="email"
-                          defaultValue={adminUser?.email || "admin@electricpulse.com"}
+                          value={adminProfileEmail}
+                          onChange={(e) => setAdminProfileEmail(e.target.value)}
                           className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
                         />
                       </div>
@@ -2673,13 +2951,15 @@ export default function Home() {
                     </div>
 
                     <form 
-                      onSubmit={(e) => { e.preventDefault(); triggerNotification("Password admin berhasil diperbarui!"); }} 
+                      onSubmit={handleUpdateAdminPassword}
                       className="grid grid-cols-1 md:grid-cols-2 gap-5"
                     >
                       <div className="flex flex-col gap-2">
                         <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Password Lama</label>
                         <input
                           type="password"
+                          value={adminOldPassword}
+                          onChange={(e) => setAdminOldPassword(e.target.value)}
                           placeholder="••••••••"
                           className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
                         />
@@ -2689,6 +2969,19 @@ export default function Home() {
                         <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Password Baru</label>
                         <input
                           type="password"
+                          value={adminNewPassword}
+                          onChange={(e) => setAdminNewPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] tracking-wider text-[#8b8b9a] font-bold uppercase">Konfirmasi Password Baru</label>
+                        <input
+                          type="password"
+                          value={adminConfirmPassword}
+                          onChange={(e) => setAdminConfirmPassword(e.target.value)}
                           placeholder="••••••••"
                           className="w-full bg-[#18181f] border border-[#26262f] rounded-xl px-4 py-3 text-xs text-white placeholder-[#50505f] focus:outline-none focus:border-[#ff3b70]/40 transition-all font-semibold"
                         />
@@ -2712,11 +3005,20 @@ export default function Home() {
           {/* ==================== H. SETTINGS VIEW (PENGATURAN ADMIN) ==================== */}
           {activeTab === "pengaturan" && (
             <div className="flex flex-col gap-8 animate-fade-in max-w-4xl">
-              <div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-white">Pengaturan</h1>
-                <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
-                  Kelola preferensi konsol admin dan notifikasi sistem.
-                </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">Pengaturan</h1>
+                  <p className="text-xs text-[#8b8b9a] mt-1.5 font-medium">
+                    Kelola preferensi konsol admin dan notifikasi sistem.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab("dashboard")}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0d0d10] border border-[#26262f] text-[#8b8b9a] hover:text-white hover:border-[#ff3b70]/40 transition-all text-xs font-bold cursor-pointer shrink-0 mt-1"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">Kembali</span>
+                </button>
               </div>
 
               <div className="bg-[#141419] border border-[#26262f] rounded-2xl p-6 glow-card">
@@ -2727,20 +3029,26 @@ export default function Home() {
 
                 <div className="flex flex-col gap-5">
                   {[
-                    { label: "Email Alerts", desc: "Terima ringkasan laporan penjualan harian." },
-                    { label: "Notifikasi Pembayaran", desc: "Diberitahu saat ada transaksi baru menunggu verifikasi." },
-                    { label: "Peringatan Stok Tiket", desc: "Diberitahu saat okupansi tiket mencapai 80%." }
+                    { key: "emailAlerts", label: "Email Alerts", desc: "Terima ringkasan laporan penjualan harian." },
+                    { key: "paymentNotif", label: "Notifikasi Pembayaran", desc: "Diberitahu saat ada transaksi baru menunggu verifikasi." },
+                    { key: "stockNotif", label: "Peringatan Stok Tiket", desc: "Diberitahu saat okupansi tiket mencapai 80%." }
                   ].map((item) => (
-                    <div key={item.label} className="flex items-center justify-between">
-                      <div>
+                    <div key={item.key} className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
                         <span className="text-xs font-bold text-white block">{item.label}</span>
                         <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">{item.desc}</span>
                       </div>
                       <button
                         type="button"
-                        className="w-10 h-6 rounded-full bg-[#ff3b70] p-1 transition-colors cursor-pointer"
+                        onClick={() => setAdminSettings((prev) => ({ ...prev, [item.key]: !prev[item.key] }))}
+                        className={`w-10 h-6 rounded-full p-1 transition-colors cursor-pointer shrink-0 ${
+                          adminSettings[item.key] ? "bg-[#ff3b70]" : "bg-[#26262f]"
+                        }`}
+                        aria-pressed={adminSettings[item.key]}
                       >
-                        <div className="w-4 h-4 bg-white rounded-full translate-x-4 transition-transform" />
+                        <div className={`w-4 h-4 bg-white rounded-full transition-transform ${
+                          adminSettings[item.key] ? "translate-x-4" : "translate-x-0"
+                        }`} />
                       </button>
                     </div>
                   ))}
@@ -2754,29 +3062,39 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-col gap-5">
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
                       <span className="text-xs font-bold text-white block">Bahasa Tampilan</span>
                       <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">Pilih bahasa untuk antarmuka konsol.</span>
                     </div>
-                    <div className="relative">
-                      <select className="bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer">
+                    <div className="relative shrink-0 w-full sm:w-auto">
+                      <select
+                        value={adminSettings.language}
+                        onChange={(e) => setAdminSettings((prev) => ({ ...prev, language: e.target.value }))}
+                        className="w-full sm:w-auto bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer"
+                      >
                         <option>Bahasa Indonesia</option>
                         <option>English</option>
                       </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#8b8b9a] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="min-w-0">
                       <span className="text-xs font-bold text-white block">Mata Uang</span>
                       <span className="text-[10px] text-[#8b8b9a] mt-0.5 block">Format nominal pada laporan keuangan.</span>
                     </div>
-                    <div className="relative">
-                      <select className="bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer">
+                    <div className="relative shrink-0 w-full sm:w-auto">
+                      <select
+                        value={adminSettings.currency}
+                        onChange={(e) => setAdminSettings((prev) => ({ ...prev, currency: e.target.value }))}
+                        className="w-full sm:w-auto bg-[#18181f] border border-[#26262f] text-white text-xs py-2.5 pl-4 pr-9 rounded-xl outline-none focus:border-[#ff3b70]/40 appearance-none cursor-pointer"
+                      >
                         <option>IDR (Rp)</option>
                         <option>USD ($)</option>
                       </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#8b8b9a] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
                   </div>
                 </div>

@@ -25,6 +25,14 @@ export default function RegisterBox() {
       setError("Lengkapi nama, email, dan password terlebih dahulu.");
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+      setError("Format email tidak valid.");
+      return;
+    }
+    if (String(password).length < 6) {
+      setError("Password minimal 6 karakter.");
+      return;
+    }
     setError("");
     setMessage("");
     setDevOtp("");

@@ -23,11 +23,15 @@ function LoginPageContent() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next");
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://ideal-wonder-production-445e.up.railway.app";
+
+  // Cegah open redirect: hanya izinkan path internal (mis. /user, /admin/...)
+  const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -44,7 +48,7 @@ function LoginPageContent() {
       const res = await fetch(`${API_BASE}/api/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, rememberMe })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -61,8 +65,8 @@ function LoginPageContent() {
 
       if (String(data.user.role).toLowerCase().includes("admin")) {
         router.push("/admin");
-      } else if (next) {
-        router.push(next);
+      } else if (safeNext) {
+        router.push(safeNext);
       } else {
         router.push("/user");
       }
@@ -95,6 +99,8 @@ function LoginPageContent() {
           showPassword={showPassword}
           setShowPassword={setShowPassword}
           loading={loading}
+          rememberMe={rememberMe}
+          setRememberMe={setRememberMe}
         />
       </div>
     </main>

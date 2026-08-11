@@ -82,6 +82,13 @@ export default function EventDetailPage() {
     return d.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   };
 
+  // TIME MySQL ("19:00:00") -> "19:00"
+  const formatEventTime = (t) => {
+    if (!t) return "19:00";
+    const s = String(t);
+    return s.includes(":") ? s.slice(0, 5) : s;
+  };
+
   const handleOrder = () => {
     if (!isLoggedIn) {
       router.push(`/login?next=/events/${event.id}`);
@@ -143,7 +150,7 @@ export default function EventDetailPage() {
             <div className="flex flex-wrap gap-x-6 gap-y-2 pt-2 border-t border-white/10">
               <span className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                 <Clock className="w-4 h-4 text-[#ff3b70]" />
-                {event.time || "19:00"} WIB
+                {formatEventTime(event.time)} WIB
               </span>
               <span className="flex items-center gap-2 text-xs font-semibold text-[#8b8b9a] font-mono">
                 <Calendar className="w-4 h-4 text-[#ff3b70]" />
@@ -210,7 +217,7 @@ export default function EventDetailPage() {
             <div className="sticky top-24 rounded-3xl border border-white/5 bg-[#0d0d14]/90 p-7 space-y-6">
               <div>
                 <h3 className="text-lg font-extrabold text-white font-mono">Pesan Tiket</h3>
-                <p className="text-[10px] text-[#8b8b9a] font-semibold mt-1">Harga per tiket sudah termasuk pajak.</p>
+                <p className="text-[10px] text-[#8b8b9a] font-semibold mt-1">Harga per tiket belum termasuk pajak 10%.</p>
               </div>
 
               <div className="rounded-2xl border border-[#ff3b70]/20 bg-[#ff3b70]/5 p-5 flex items-center justify-between">

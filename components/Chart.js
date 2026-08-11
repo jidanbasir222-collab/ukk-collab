@@ -124,7 +124,7 @@ export default function Chart() {
       <div className="relative w-full overflow-x-auto select-none">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="w-full min-w-[750px] h-auto overflow-visible"
+          className="w-full min-w-[560px] sm:min-w-0 h-auto overflow-visible"
         >
           <defs>
             {/* Gradient under the curve */}
