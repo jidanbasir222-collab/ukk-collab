@@ -2071,11 +2071,15 @@ function UserConsoleContent() {
             </div>
 
             <div className="bg-white p-6 rounded-2xl flex flex-col items-center gap-4 shadow-xl">
-              {/* QR bawaan (bisa QRIS jika terpilih, fallback ke QR tiket) */}
-              <img
-                src="/qris.jpeg"
+              {/* QR tiket asli: dapat dipindai dan berisi data tiket */}
+              <Image
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+                  `EP-TICKET|${activeAccessTicket.code}|${activeAccessTicket.event}`
+                )}`}
                 alt={`QR Code tiket ${activeAccessTicket.code}`}
                 className="w-44 h-44 object-contain"
+                width={176}
+                height={176}
               />
               <span className="text-xs font-mono font-bold tracking-widest text-[#09090b]">
                 {activeAccessTicket.code}

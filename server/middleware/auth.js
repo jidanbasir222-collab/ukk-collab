@@ -4,15 +4,22 @@ require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") }
 const PLACEHOLDER_SECRETS = ["your_jwt_secret_here", "electricpulse-secret", "secret", "changeme"];
 const isProduction = process.env.NODE_ENV === "production";
 
-// Di production, JWT_SECRET WAJIB ada dan bukan placeholder — gagal cepat daripada
-// membiarkan token bisa dipalsukan dengan secret yang diketahui publik.
-if (isProduction && (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase()))) {
-  throw new Error("JWT_SECRET wajib diisi dengan string acak panjang di production. Perbaiki env lalu restart.");
-}
-const JWT_SECRET = process.env.JWT_SECRET || "electricpulse-secret";
+// Di production, JWT_SECRET sebaiknya diset di env (Railway). Jika tidak ada/placeholder,
+// server TIDAK boleh mati total (DoS sendiri): generate secret acak kuat saat boot sebagai
+// fallback sementara, dan log peringatan agar admin segera melengkapi env.
+const missingOrPlaceholderSecret =
+  !process.env.JWT_SECRET ||
+  PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase());
 
-if (!isProduction && (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.includes(String(process.env.JWT_SECRET).toLowerCase()))) {
-  console.warn("PERINGATAN KEAMANAN: JWT_SECRET masih placeholder. Ganti dengan string acak panjang di server/.env (dan di Railway)!");
+let JWT_SECRET = process.env.JWT_SECRET;
+if (missingOrPlaceholderSecret) {
+  if (isProduction) {
+    const crypto = require("crypto");
+    JWT_SECRET = crypto.randomBytes(48).toString("hex");
+    console.error("PERINGATAN: JWT_SECRET tidak diset/placeholder di production. Memakai secret acak sementara — semua sesi akan reset saat server restart. Set JWT_SECRET di Railway Settings!")
+  } else {
+    console.warn("PERINGATAN KEAMANAN: JWT_SECRET masih placeholder. Ganti dengan string acak panjang di server/.env (dan di Railway)!");
+  }
 }
 const TOKEN_EXPIRES_IN = "2h";
 const TOKEN_EXPIRES_IN_REMEMBER = "30d";
